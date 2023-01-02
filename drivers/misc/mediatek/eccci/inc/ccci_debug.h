@@ -55,7 +55,7 @@ do { \
 } while (0)
 
 #define CCCI_LEGACY_ERR_LOG(idx, tag, fmt, args...) \
-	pr_notice("[ccci%d/" tag "]" fmt, (idx+1), ##args)
+	pr_notice_ratelimited("[ccci%d/" tag "]" fmt, (idx+1), ##args)
 
 /*--------------------------------------------------------------------------*/
 /* This log is used for driver init and part of first boot up log */
