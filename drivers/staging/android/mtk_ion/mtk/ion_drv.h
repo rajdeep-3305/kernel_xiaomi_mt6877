@@ -250,7 +250,7 @@ struct ion_mm_data {
 #define ion_info(string, args...)    pr_info("[ION]" string, ##args)
 #define ion_debug(string, args...)   pr_debug("[ION]" string, ##args)
 /* original message print */
-#define IONMSG(string, args...)	     pr_err("[ION]" string, ##args)
+#define IONMSG(string, args...)	     pr_debug("[ION]" string, ##args)
 #define IONDBG(string, args...)	     pr_debug("[ION]" string, ##args)
 
 /* Exported global variables */
