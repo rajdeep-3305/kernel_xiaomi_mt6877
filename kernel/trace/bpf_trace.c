@@ -1019,6 +1019,7 @@ static void do_bpf_send_signal(struct irq_work *entry)
 
 	work = container_of(entry, struct send_signal_irq_work, irq_work);
 	group_send_sig_info(work->sig, SEND_SIG_PRIV, work->task, work->type);
+	put_task_struct(work->task);
 }
 
 static int bpf_send_signal_common(u32 sig, enum pid_type type)
@@ -1056,6 +1057,7 @@ static int bpf_send_signal_common(u32 sig, enum pid_type type)
 		 * irq works get executed.
 		 */
 		work->task = current;
+		get_task_struct(work->task);
 		work->sig = sig;
 		work->type = type;
 		irq_work_queue(&work->irq_work);
