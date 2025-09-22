@@ -777,7 +777,8 @@ retry:
 		 * avoid triggering later f2fs_bug_on().
 		 */
 		if (is_inode_flag_set(inode, FI_DIRTY_INODE)) {
-			f2fs_warn(sbi, "f2fs_evict_inode: inode is dirty, ino:%lu",
+			f2fs_warn(sbi, KERN_WARNING,
+				"f2fs_evict_inode: inode is dirty, ino:%lu",
 				inode->i_ino);
 			f2fs_inode_synced(inode);
 			set_sbi_flag(sbi, SBI_NEED_FSCK);
