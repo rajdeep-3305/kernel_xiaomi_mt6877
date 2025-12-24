@@ -355,7 +355,7 @@ int vcu_ipi_register(struct platform_device *pdev,
 	unsigned int i = 0;
 
 	if (vcu == NULL) {
-		dev_err(&pdev->dev, "vcu device in not ready\n");
+		dev_dbg(&pdev->dev, "vcu device in not ready\n");
 		return -EPROBE_DEFER;
 	}
 
@@ -1259,7 +1259,7 @@ struct platform_device *vcu_get_plat_device(struct platform_device *pdev)
 
 	vcu_node = of_parse_phandle(dev->of_node, "mediatek,vcu", 0);
 	if (vcu_node == NULL) {
-		dev_err(dev, "[VCU] can't get vcu node\n");
+		dev_dbg(dev, "[VCU] can't get vcu node\n");
 		return NULL;
 	}
 
