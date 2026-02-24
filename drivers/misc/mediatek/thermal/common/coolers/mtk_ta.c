@@ -50,7 +50,7 @@ static int mtkts_ta_debug_log;
 		}                                   \
 	} while (0)
 
-#define tsta_warn(fmt, args...)  pr_notice("[Thermal/TC/TA]" fmt, ##args)
+#define tsta_warn(fmt, args...)  pr_debug("[Thermal/TC/TA]" fmt, ##args)
 
 /* ************************************ */
 /* Weak functions */

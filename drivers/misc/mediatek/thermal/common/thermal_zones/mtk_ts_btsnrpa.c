@@ -97,7 +97,7 @@ do {                                    \
 } while (0)
 
 #define mtkts_btsnrpa_printk(fmt, args...) \
-pr_notice("[Thermal/TZ/BTSNRPA]" fmt, ##args)
+pr_debug("[Thermal/TZ/BTSNRPA]" fmt, ##args)
 
 
 #if defined(CONFIG_MEDIATEK_MT6577_AUXADC)
@@ -1199,7 +1199,7 @@ void mtkts_btsnrpa_prepare_table(int table_num)
 		break;
 	}
 
-	pr_notice("[Thermal/TZ/BTSNRPA] %s table_num=%d\n",
+	pr_debug("[Thermal/TZ/BTSNRPA] %s table_num=%d\n",
 						__func__, table_num);
 
 #if 0

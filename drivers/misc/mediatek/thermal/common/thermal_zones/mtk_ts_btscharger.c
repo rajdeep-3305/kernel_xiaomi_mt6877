@@ -885,7 +885,7 @@ void mtkts_btscharger_prepare_table(int table_num)
 		break;
 	}
 
-	pr_notice("[Thermal/TZ/BTSCHARGER] %s table_num=%d\n",
+	pr_debug("[Thermal/TZ/BTSCHARGER] %s table_num=%d\n",
 						__func__, table_num);
 }
 static int mtktscharger_read(struct seq_file *m, void *v)
