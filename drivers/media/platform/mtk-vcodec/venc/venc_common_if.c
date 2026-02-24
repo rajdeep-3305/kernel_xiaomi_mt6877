@@ -146,8 +146,10 @@ static int venc_encode_frame(struct venc_inst *inst,
 	unsigned int *bs_size)
 {
 	int ret = 0;
+#if defined(DEBUG)
 	unsigned int fm_fourcc = inst->ctx->q_data[MTK_Q_DATA_SRC].fmt->fourcc;
 	unsigned int bs_fourcc = inst->ctx->q_data[MTK_Q_DATA_DST].fmt->fourcc;
+#endif
 
 	mtk_vcodec_debug_enter(inst);
 
