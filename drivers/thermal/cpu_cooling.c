@@ -371,7 +371,11 @@ void cpu_limits_set_level(unsigned int cpu, unsigned int max_freq)
 		sscanf(cpufreq_cdev->cdev->type, "thermal-cpufreq-%d", &cdev_cpu);
 		if (cdev_cpu == cpu) {
 			for (level = 0; level <= cpufreq_cdev->max_level; level++) {
+#ifdef CONFIG_ENERGY_MODEL
 				int target_freq = cpufreq_cdev->em->table[level].frequency;
+#else
+				int target_freq = 0;
+#endif
 				pr_err("%s: %d not part of any cooling device\n", __func__, target_freq);
 
 				if (max_freq >= target_freq) {
