@@ -22,7 +22,7 @@ endif
 $(info mtk-Kbuild CONFIG_MALI_PLATFORM_THIRDPARTY := $(CONFIG_MALI_PLATFORM_THIRDPARTY))
 $(info mtk-Kbuild CONFIG_MALI_PLATFORM_THIRDPARTY_NAME := $(CONFIG_MALI_PLATFORM_THIRDPARTY_NAME))
 
-CONFIG_MALI_DEBUG := y
+CONFIG_MALI_DEBUG := n
 
 ccflags-y += -I$(srctree)/include
 ccflags-y += -I$(srctree)/drivers/staging/android
@@ -91,4 +91,3 @@ ifeq (, $(findstring $(CONFIG_MTK_PLATFORM), "mt6768" "mt6785"))
 ccflags-y += -DCONFIG_MTK_GPU_DEBUG
 ccflags-y += -DCONFIG_MTK_GPU_DEBUG_DFD
 endif
-ccflags-y += -DCONFIG_MTK_GPU_MEM_TRACK

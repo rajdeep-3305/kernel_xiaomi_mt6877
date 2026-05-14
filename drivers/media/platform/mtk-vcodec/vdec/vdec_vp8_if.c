@@ -401,7 +401,6 @@ static int vdec_vp8_init(struct mtk_vcodec_ctx *ctx, unsigned long *h_vdec)
 	inst->vpu.id = IPI_VDEC_VP8;
 	inst->vpu.dev = ctx->dev->vpu_plat_dev;
 	inst->vpu.ctx = ctx;
-	inst->vpu.handler = vpu_dec_ipi_handler;
 
 	err = vpu_dec_init(&inst->vpu);
 	if (err) {
@@ -611,10 +610,10 @@ static void vdec_vp8_deinit(unsigned long h_vdec)
 }
 
 static struct vdec_common_if vdec_vp8_if = {
-	vdec_vp8_init,
-	vdec_vp8_decode,
-	vdec_vp8_get_param,
-	vdec_vp8_deinit,
+	.init		= vdec_vp8_init,
+	.decode		= vdec_vp8_decode,
+	.get_param	= vdec_vp8_get_param,
+	.deinit		= vdec_vp8_deinit,
 };
 
 struct vdec_common_if *get_vp8_dec_comm_if(void);

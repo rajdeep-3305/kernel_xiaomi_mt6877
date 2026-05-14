@@ -2241,7 +2241,7 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	* because new_policy is a copy of policy with one field updated.
 	*/
 	if (new_policy->min > new_policy->max)
-		return -EINVAL;
+		new_policy->min = new_policy->max;
 
 	/* verify the cpu speed can be set within this limit */
 	ret = cpufreq_driver->verify(new_policy);
@@ -2375,6 +2375,37 @@ unlock:
 	cpufreq_cpu_put(policy);
 }
 EXPORT_SYMBOL(cpufreq_update_policy);
+
+#if !IS_ENABLED(CONFIG_MTK_CPU_CTRL)
+/*
+ * ppm will make min/max work through cpufreq_set_policy as well as
+ * scaling_min_freq/scaling_max_freq, then ppm will also keep min/max in
+ * policy->user_policy
+ */
+void cpufreq_set_policy_ppm(unsigned int cpu, int min, int max)
+{
+	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+	struct cpufreq_policy new_policy;
+	int ret;
+
+	if (!policy)
+		return;
+
+	down_write(&policy->rwsem);
+	memcpy(&new_policy, policy, sizeof(*policy));
+	new_policy.min = min;
+	new_policy.max = max;
+	ret = cpufreq_set_policy(policy, &new_policy);
+	if (!ret) {
+		policy->user_policy.min = min;
+		policy->user_policy.max = max;
+	}
+	up_write(&policy->rwsem);
+
+	cpufreq_cpu_put(policy);
+}
+EXPORT_SYMBOL(cpufreq_set_policy_ppm);
+#endif
 
 /*********************************************************************
  *               BOOST						     *

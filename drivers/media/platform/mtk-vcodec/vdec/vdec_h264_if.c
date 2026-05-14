@@ -278,7 +278,6 @@ static int vdec_h264_init(struct mtk_vcodec_ctx *ctx, unsigned long *h_vdec)
 	inst->vpu.id = IPI_VDEC_H264;
 	inst->vpu.dev = ctx->dev->vpu_plat_dev;
 	inst->vpu.ctx = ctx;
-	inst->vpu.handler = vpu_dec_ipi_handler;
 
 	err = vpu_dec_init(&inst->vpu);
 	if (err) {
@@ -484,10 +483,10 @@ static int vdec_h264_get_param(unsigned long h_vdec,
 }
 
 static struct vdec_common_if vdec_h264_if = {
-	vdec_h264_init,
-	vdec_h264_decode,
-	vdec_h264_get_param,
-	vdec_h264_deinit,
+	.init		= vdec_h264_init,
+	.decode		= vdec_h264_decode,
+	.get_param	= vdec_h264_get_param,
+	.deinit		= vdec_h264_deinit,
 };
 
 struct vdec_common_if *get_h264_dec_comm_if(void);
