@@ -83,7 +83,7 @@ static int seq_show(struct seq_file *m, void *v)
 			goto orig_flow;
 		}
 		dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
-		if (!dpath) {
+		if (IS_ERR_OR_NULL(dpath)) {
 			goto out_kfree;
 		}
 		if (kern_path(dpath, 0, &path)) {
