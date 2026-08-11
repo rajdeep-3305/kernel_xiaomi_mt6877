@@ -1372,6 +1372,11 @@ static void uclamp_post_fork(struct task_struct *p)
 	uclamp_update_util_min_rt_default(p);
 }
 
+void sched_post_fork(struct task_struct *p)
+{
+	uclamp_post_fork(p);
+}
+
 int set_task_util_min(pid_t pid, unsigned int util_min)
 {
 	struct task_struct *p;
@@ -1505,6 +1510,7 @@ static void __setscheduler_uclamp(struct task_struct *p,
 				  const struct sched_attr *attr) { }
 static inline void uclamp_fork(struct task_struct *p) { }
 static inline void uclamp_post_fork(struct task_struct *p) { }
+void sched_post_fork(struct task_struct *p) { }
 
 long schedtune_task_margin(struct task_struct *task);
 
