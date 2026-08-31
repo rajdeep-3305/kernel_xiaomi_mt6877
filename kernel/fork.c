@@ -2521,17 +2521,19 @@ noinline static int copy_clone_args_from_user(struct kernel_clone_args *kargs,
 					      struct clone_args __user *uargs,
 					      size_t size)
 {
+	int err;
 	struct clone_args args;
 	pid_t *kset_tid = kargs->set_tid;
 
 	if (unlikely(size > PAGE_SIZE))
 		return -E2BIG;
 
-	if (unlikely(size < sizeof(struct clone_args)))
+	if (unlikely(size < CLONE_ARGS_SIZE_VER0))
 		return -EINVAL;
 
-	if (unlikely(!access_ok(VERIFY_READ, uargs, size)))
-		return -EFAULT;
+	err = copy_struct_from_user(&args, sizeof(args), uargs, size);
+	if (err)
+		return err;
 
 	if (unlikely(args.set_tid_size > MAX_PID_NS_LEVEL))
 		return -EINVAL;
