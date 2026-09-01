@@ -1,0 +1,51 @@
+[
+  {
+    "kernelSource": {
+      "name": "ruby",
+      "repo": "https://github.com/rajdeep-3305/kernel_xiaomi_mt6877",
+      "branch": "lineage-23.2",
+      "device": "ruby",
+      "defconfig": "ruby_defconfig"
+    },
+    "withKernelSU": true,
+    "withSuSFS": true,
+    "toolchains": [
+      {
+        "repo": "https://gitlab.com/wodanesdag/android_prebuilts_clang_host_linux-x86_clang-r563880",
+        "branch": "master",
+        "name": "clang",
+        "binPath": ["./bin"]
+      }
+    ],
+    "ccache": true,
+    "params": {
+      "ARCH": "arm64",
+      "CC": "clang/bin/clang",
+      "externalCommand": {
+        "KBUILD_BUILD_HOST": "realm",
+        "KBUILD_BUILD_USER": "casanova",
+        "CROSS_COMPILE": "clang/bin/aarch64-linux-gnu-",
+        "CROSS_COMPILE_ARM32": "clang/bin/arm-linux-gnueabi-",
+        "LD": "clang/bin/ld.lld",
+        "LLVM": "1",
+        "LLVM_IAS": "1",
+        "AR": "clang/bin/llvm-ar",
+        "NM": "clang/bin/llvm-nm",
+        "OBJCOPY": "clang/bin/llvm-objcopy",
+        "OBJDUMP": "clang/bin/llvm-objdump",
+        "READELF": "clang/bin/llvm-readelf",
+        "OBJSIZE": "clang/bin/llvm-size",
+        "STRIP": "clang/bin/llvm-strip",
+        "LDGOLD": "clang/bin/aarch64-linux-gnu-ld.gold",
+        "LLVM_AR": "clang/bin/llvm-ar",
+        "LLVM_DIS": "clang/bin/llvm-dis"
+      }
+    },
+    "AnyKernel3": {
+      "use": true,
+      "release": true,
+      "repo": "https://github.com/rajdeep-3305/AnyKernel3",
+      "branch": "eclipse-v2"
+    }
+  }
+]
