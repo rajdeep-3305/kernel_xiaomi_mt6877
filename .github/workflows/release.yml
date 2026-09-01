@@ -205,11 +205,10 @@ jobs:
         if: ${{ env.withKernelSU == 'true' && env.withSuSFS == 'true'}}
         run: |
           echo "" > .scmversion
-          git clone -b legacy https://github.com/wodanesdag/KernelSU-Next.git
-          bash KernelSU-Next/kernel/setup.sh
+          git clone -b susfs https://github.com/wodanesdag/KernelSU-Next.git
+          bash KernelSU-Next/kernel/setup.sh susfs
           cd KernelSU-Next
-          git switch legacy
-          KERNELSU_NEXT_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) + 30060)
+          KERNELSU_NEXT_VERSION=$(expr $(/usr/bin/git rev-list --count HEAD) + 30200)
           echo -e "\n💡 KernelSU Next version: $KERNELSU_NEXT_VERSION\n"
           echo -e "KERNELSU_NEXT_VERSION=$KERNELSU_NEXT_VERSION" >> $GITHUB_OUTPUT     
 
