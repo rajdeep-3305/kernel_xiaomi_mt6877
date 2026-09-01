@@ -98,6 +98,9 @@
 #include <trace/events/oom.h>
 #include "internal.h"
 #include "fd.h"
+#if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+#include <linux/susfs_def.h>
+#endif
 
 #include "../../lib/kstrtox.h"
 
@@ -841,7 +844,6 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 
 	while (count > 0) {
 		size_t this_len = min_t(size_t, count, PAGE_SIZE);
-
 		if (write && copy_from_user(page, buf, this_len)) {
 			copied = -EFAULT;
 			break;
@@ -1629,10 +1631,15 @@ static const char *proc_pid_get_link(struct dentry *dentry,
 	if (error)
 		goto out;
 
-	error = nd_jump_link(&path);
+	nd_jump_link(&path);
+	return NULL;
 out:
 	return ERR_PTR(error);
 }
+
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+extern int susfs_open_redirect_spoof_do_proc_readlink(struct inode *inode, char *tmp_buf, int buflen);
+#endif
 
 static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
 {
@@ -1642,6 +1649,17 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
 
 	if (!tmp)
 		return -ENOMEM;
+
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
+		if (!susfs_open_redirect_spoof_do_proc_readlink(path->dentry->d_inode, tmp, buflen)) {
+			len = strlen(tmp);
+			if (copy_to_user(buffer, tmp, len))
+				len = -EFAULT;
+			goto out;
+		}
+	}
+#endif
 
 	pathname = d_path(path, tmp, PAGE_SIZE);
 	len = PTR_ERR(pathname);
@@ -2038,11 +2056,17 @@ static int map_files_get_link(struct dentry *dentry, struct path *path)
 
 	rc = -ENOENT;
 	vma = find_exact_vma(mm, vm_start, vm_end);
-	if (vma && vma->vm_file) {
-		*path = vma->vm_file->f_path;
-		path_get(path);
-		rc = 0;
-	}
+ 	if (vma) {
+        	if (vma->vm_file) {
+            		if (strstr(vma->vm_file->f_path.dentry->d_name.name, "lineage")) { 
+            		rc = kern_path("/dev/ashmem (deleted)", LOOKUP_FOLLOW, path);
+        	} else {
+			*path = vma->vm_file->f_path;
+			path_get(path);
+                	rc = 0;
+            		}
+        	}
+    	}
 	mmap_read_unlock(mm);
 
 out_mmput:
@@ -2058,16 +2082,16 @@ struct map_files_info {
 };
 
 /*
- * Only allow CAP_SYS_ADMIN and CAP_CHECKPOINT_RESTORE to follow the links, due
- * to concerns about how the symlinks may be used to bypass permissions on
- * ancestor directories in the path to the file in question.
+ * Only allow CAP_SYS_ADMIN to follow the links, due to concerns about how the
+ * symlinks may be used to bypass permissions on ancestor directories in the
+ * path to the file in question.
  */
 static const char *
 proc_map_files_get_link(struct dentry *dentry,
 			struct inode *inode,
 		        struct delayed_call *done)
 {
-	if (!checkpoint_restore_ns_capable(&init_user_ns))
+	if (!capable(CAP_SYS_ADMIN))
 		return ERR_PTR(-EPERM);
 
 	return proc_pid_get_link(dentry, inode, done);
@@ -2168,7 +2192,8 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	struct task_struct *task;
 	struct mm_struct *mm;
 	unsigned long nr_files, pos, i;
-	struct map_files_info *fa = NULL;
+	struct flex_array *fa = NULL;
+	struct map_files_info info;
 	struct map_files_info *p;
 	int ret;
 
@@ -2213,26 +2238,34 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 	}
 
 	if (nr_files) {
-		fa = kvmalloc_array(nr_files, sizeof(*fa), GFP_KERNEL);
-		if (!fa) {
+		fa = flex_array_alloc(sizeof(info), nr_files,
+					GFP_KERNEL);
+		if (!fa || flex_array_prealloc(fa, 0, nr_files,
+						GFP_KERNEL)) {
 			ret = -ENOMEM;
+			if (fa)
+				flex_array_free(fa);
 			mmap_read_unlock(mm);
 			mmput(mm);
 			goto out_put_task;
 		}
-		for (i = 0, vma = mm->mmap, pos = 2; vma && i < nr_files;
+		for (i = 0, vma = mm->mmap, pos = 2; vma;
 				vma = vma->vm_next) {
 			if (!vma->vm_file)
 				continue;
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+			if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+				continue;
+#endif
 			if (++pos <= ctx->pos)
 				continue;
 
-			fa[i].start = vma->vm_start;
-			fa[i].end = vma->vm_end;
-			fa[i].mode = vma->vm_file->f_mode;
-			i++;
+			info.start = vma->vm_start;
+			info.end = vma->vm_end;
+			info.mode = vma->vm_file->f_mode;
+			if (flex_array_put(fa, i++, &info, GFP_KERNEL))
+				BUG();
 		}
-		nr_files = i;
 	}
 	mmap_read_unlock(mm);
 	mmput(mm);
@@ -2241,7 +2274,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 		char buf[4 * sizeof(long) + 2];	/* max: %lx-%lx\0 */
 		unsigned int len;
 
-		p = &fa[i];
+		p = flex_array_get(fa, i);
 		len = snprintf(buf, sizeof(buf), "%lx-%lx", p->start, p->end);
 		if (!proc_fill_cache(file, ctx,
 				      buf, len,
@@ -2252,7 +2285,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 		ctx->pos++;
 	}
 	if (fa)
-		kvfree(fa);
+		flex_array_free(fa);
 
 out_put_task:
 	put_task_struct(task);
