@@ -283,12 +283,13 @@ void fuse_request_end(struct fuse_conn *fc, struct fuse_req *req)
 	void (*end)(struct fuse_conn *, struct fuse_args *, int) = NULL;
 	struct fuse_args *args;
 
-	if (test_and_set_bit(FR_FINISHED, &req->flags))
-		goto put_request;
-
 	args = req->args;
 	if (args)
 		end = args->end;
+
+	if (test_and_set_bit(FR_FINISHED, &req->flags))
+		goto put_request;
+
 	/*
 	 * test_and_set_bit() implies smp_mb() between bit
 	 * changing and below intr_entry check. Pairs with
