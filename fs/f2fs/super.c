@@ -3766,11 +3766,13 @@ try_onemore:
 		err = f2fs_recover_fsync_data(sbi, true);
 		if (err > 0) {
 			if (!f2fs_readonly(sb)) {
-				f2fs_err(sbi, "Need to recover fsync data");
+				f2fs_msg(sb, KERN_ERR,
+					"Need to recover fsync data");
 				err = -EINVAL;
 				goto free_meta;
 			} else {
-				f2fs_info(sbi, "drop all fsynced data");
+				f2fs_msg(sb, KERN_INFO,
+					"drop all fsynced data");
 				err = 0;
 			}
 		}
