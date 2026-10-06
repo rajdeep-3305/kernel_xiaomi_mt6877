@@ -11258,24 +11258,13 @@ irqreturn_t ISP_Irq_CAM(
 
 		if (FrameStatus[module] == CAM_FST_DROP_FRAME) {
 			drop_count[cardinalNum]++;
-<<<<<<< HEAD
 			if (READ_ONCE(irq_log))
 				pr_notice_ratelimited(MyTag "CAM%c Lost p1 done: sof=%u total=%u port=%u mode=%u avail=%u en=%#x fbc=%#x/%#x\n",
 						      'A' + cardinalNum, sof_count[module],
 						      drop_count[cardinalNum], drop_state.port,
 						      drop_state.queue_mode, drop_state.available,
-					      drop_state.dma_en, drop_state.fbc_ctrl1.Raw,
-					      drop_state.fbc_ctrl2.Raw);
-			else
-				pr_notice_ratelimited(MyTag "CAM%c Lost p1 done: sof=%u total=%u\n",
-						      'A' + cardinalNum, sof_count[module],
-						      drop_count[cardinalNum]);
-=======
-			if (!READ_ONCE(irq_log))
-				pr_notice_ratelimited(MyTag "CAM%c Lost p1 done: sof=%u total=%u\n",
-					'A' + cardinalNum, sof_count[module],
-					drop_count[cardinalNum]);
->>>>>>> c187867654aff (media: mediatek: make MT6877 routine frame logs opt-in)
+						      drop_state.dma_en, drop_state.fbc_ctrl1.Raw,
+						      drop_state.fbc_ctrl2.Raw);
 			gLostPass1doneLog[module].module = module;
 			if (READ_ONCE(irq_log) &&
 			    snprintf(gLostPass1doneLog[module]._str, P1DONE_STR_LEN,
