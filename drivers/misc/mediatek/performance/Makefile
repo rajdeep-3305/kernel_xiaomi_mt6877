@@ -27,10 +27,10 @@ obj-$(CONFIG_MTK_RESYM) += resym/
 obj-$(CONFIG_MTK_GBE) += gbe/
 obj-$(CONFIG_MTK_SYSLIMITER) += syslimiter/
 
-#ifeq (,$(findstring mt8,$(CONFIG_MTK_PLATFORM)))
+ifeq (,$(findstring mt8,$(CONFIG_MTK_PLATFORM)))
 obj-y += boost_ctrl/
 obj-y += tchbst/
-#endif
+endif
 
 obj-y += perf_ioctl/
 
