@@ -1926,140 +1926,22 @@ static long mtk_vcu_unlocked_ioctl(struct file *file, unsigned int cmd,
 }
 
 #if IS_ENABLED(CONFIG_COMPAT)
-static int compat_get_vpud_allocation_data(
-	struct compat_mem_obj __user *data32,
-	struct mem_obj __user *data)
-{
-	compat_ulong_t l;
-	compat_u64 u;
-	unsigned int err = 0;
-
-	err = get_user(l, &data32->iova);
-	err |= put_user(l, &data->iova);
-	err |= get_user(l, &data32->len);
-	err |= put_user(l, &data->len);
-	err |= get_user(u, &data32->pa);
-	err |= put_user(u, &data->pa);
-	err |= get_user(u, &data32->va);
-	err |= put_user(u, &data->va);
-
-	return (int)err;
-}
-
-static int compat_put_vpud_allocation_data(
-	struct compat_mem_obj __user *data32,
-	struct mem_obj __user *data)
-{
-	compat_ulong_t l;
-	compat_u64 u;
-	unsigned int err = 0;
-
-	err = get_user(l, &data->iova);
-	err |= put_user(l, &data32->iova);
-	err |= get_user(l, &data->len);
-	err |= put_user(l, &data32->len);
-	err |= get_user(u, &data->pa);
-	err |= put_user(u, &data32->pa);
-	err |= get_user(u, &data->va);
-	err |= put_user(u, &data32->va);
-
-	return (int)err;
-}
-
 static long mtk_vcu_unlocked_compat_ioctl(struct file *file, unsigned int cmd,
 					  unsigned long arg)
 {
-	int err = 0;
-	long ret = -1;
-	struct share_obj __user *share_data32;
-	struct compat_mem_obj __user *data32;
-	struct mem_obj __user *data;
+	/* Both ARM ABIs use this fixed-width layout, including a 64-bit IOVA. */
+	static_assert(sizeof(struct compat_mem_obj) == sizeof(struct mem_obj));
+	static_assert(offsetof(struct compat_mem_obj, iova) ==
+		offsetof(struct mem_obj, iova));
+	static_assert(offsetof(struct compat_mem_obj, len) ==
+		offsetof(struct mem_obj, len));
+	static_assert(offsetof(struct compat_mem_obj, pa) ==
+		offsetof(struct mem_obj, pa));
+	static_assert(offsetof(struct compat_mem_obj, va) ==
+		offsetof(struct mem_obj, va));
 
-	switch (cmd) {
-	case COMPAT_VCU_SET_OBJECT:
-	case VCU_GET_OBJECT:
-	case VCU_GET_LOG_OBJECT:
-	case VCU_GCE_SET_CMD_FLUSH:
-	case VCU_GCE_WAIT_CALLBACK:
-		share_data32 = compat_ptr((uint32_t)arg);
-		ret = file->f_op->unlocked_ioctl(file,
-			cmd, (unsigned long)share_data32);
-		break;
-	case COMPAT_VCU_MVA_ALLOCATION:
-	case COMPAT_VCU_PA_ALLOCATION:
-		data32 = compat_ptr((uint32_t)arg);
-		data = compat_alloc_user_space(sizeof(struct mem_obj));
-		if (data == NULL)
-			return -EFAULT;
-
-		err = compat_get_vpud_allocation_data(data32, data);
-		if (err != 0)
-			return err;
-		if (cmd == COMPAT_VCU_MVA_ALLOCATION)
-			ret = file->f_op->unlocked_ioctl(file,
-				(uint32_t)VCU_MVA_ALLOCATION,
-				(unsigned long)data);
-		else
-			ret = file->f_op->unlocked_ioctl(file,
-				(uint32_t)VCU_PA_ALLOCATION,
-				(unsigned long)data);
-		err = compat_put_vpud_allocation_data(data32, data);
-		if (err != 0)
-			return err;
-		break;
-	case COMPAT_VCU_MVA_FREE:
-	case COMPAT_VCU_PA_FREE:
-		data32 = compat_ptr((uint32_t)arg);
-		data = compat_alloc_user_space(sizeof(struct mem_obj));
-		if (data == NULL)
-			return -EFAULT;
-
-		err = compat_get_vpud_allocation_data(data32, data);
-		if (err != 0)
-			return err;
-		if (cmd == COMPAT_VCU_MVA_FREE)
-			ret = file->f_op->unlocked_ioctl(file,
-				(uint32_t)VCU_MVA_FREE, (unsigned long)data);
-		else
-			ret = file->f_op->unlocked_ioctl(file,
-				(uint32_t)VCU_PA_FREE, (unsigned long)data);
-		err = compat_put_vpud_allocation_data(data32, data);
-		if (err != 0)
-			return err;
-		break;
-	case COMPAT_VCU_CACHE_FLUSH_ALL:
-		ret = file->f_op->unlocked_ioctl(file,
-			(uint32_t)VCU_CACHE_FLUSH_ALL, 0);
-		break;
-	case COMPAT_VCU_CACHE_FLUSH_BUFF:
-	case COMPAT_VCU_CACHE_INVALIDATE_BUFF:
-		data32 = compat_ptr((uint32_t)arg);
-		data = compat_alloc_user_space(sizeof(struct mem_obj));
-		if (data == NULL)
-			return -EFAULT;
-
-		err = compat_get_vpud_allocation_data(data32, data);
-		if (err != 0)
-			return err;
-		if (cmd == COMPAT_VCU_CACHE_FLUSH_BUFF) {
-			ret = file->f_op->unlocked_ioctl(file,
-				(uint32_t)VCU_CACHE_FLUSH_BUFF,
-				(unsigned long)data);
-		} else {
-			ret = file->f_op->unlocked_ioctl(file,
-				(uint32_t)VCU_CACHE_INVALIDATE_BUFF,
-				(unsigned long)data);
-		}
-
-		err = compat_put_vpud_allocation_data(data32, data);
-		if (err != 0)
-			return err;
-		break;
-	default:
-		pr_err("[VCU] Invalid cmd_number 0x%x.\n", cmd);
-		break;
-	}
-	return ret;
+	return file->f_op->unlocked_ioctl(file, cmd,
+		(unsigned long)compat_ptr(arg));
 }
 #endif
 
