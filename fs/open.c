@@ -28,6 +28,7 @@
 #include <linux/audit.h>
 #include <linux/falloc.h>
 #include <linux/fs_struct.h>
+#include <uapi/linux/openat2.h>
 #include <linux/ima.h>
 #include <linux/dnotify.h>
 #include <linux/compat.h>
@@ -1175,6 +1176,15 @@ SYSCALL_DEFINE4(openat, int, dfd, const char __user *, filename, int, flags,
 		flags |= O_LARGEFILE;
 
 	return do_sys_open(dfd, filename, flags, mode);
+}
+
+/*
+ * sys_openat2 - Stub implementation for openat2 syscall (not fully implemented in 4.19)
+ */
+SYSCALL_DEFINE4(openat2, int, dfd, const char __user *, filename,
+		struct open_how __user *, how, size_t, size)
+{
+	return -EINVAL;
 }
 
 #ifdef CONFIG_COMPAT
