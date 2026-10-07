@@ -161,6 +161,71 @@ static ssize_t current_reserved_blocks_show(struct f2fs_attr *a,
 	return sprintf(buf, "%u\n", sbi->current_reserved_blocks);
 }
 
+static ssize_t unusable_show(struct f2fs_attr *a,
+		struct f2fs_sb_info *sbi, char *buf)
+{
+	block_t unusable;
+
+	if (test_opt(sbi, DISABLE_CHECKPOINT))
+		unusable = sbi->unusable_block_count;
+	else
+		unusable = f2fs_get_unusable_blocks(sbi);
+	return sprintf(buf, "%llu\n", (unsigned long long)unusable);
+}
+
+static ssize_t encoding_show(struct f2fs_attr *a,
+		struct f2fs_sb_info *sbi, char *buf)
+{
+#ifdef CONFIG_UNICODE
+	struct super_block *sb = sbi->sb;
+
+	if (f2fs_sb_has_casefold(sbi))
+		return snprintf(buf, PAGE_SIZE, "%s (%d.%d.%d)\n",
+			sb->s_encoding->charset,
+			(sb->s_encoding->version >> 16) & 0xff,
+			(sb->s_encoding->version >> 8) & 0xff,
+			sb->s_encoding->version & 0xff);
+#endif
+	return sprintf(buf, "(none)");
+}
+
+static ssize_t mounted_time_sec_show(struct f2fs_attr *a,
+		struct f2fs_sb_info *sbi, char *buf)
+{
+	return sprintf(buf, "%llu", SIT_I(sbi)->mounted_time);
+}
+
+#ifdef CONFIG_F2FS_STAT_FS
+static ssize_t moved_blocks_foreground_show(struct f2fs_attr *a,
+				struct f2fs_sb_info *sbi, char *buf)
+{
+	struct f2fs_stat_info *si = F2FS_STAT(sbi);
+
+	return sprintf(buf, "%llu\n",
+		(unsigned long long)(si->tot_blks -
+			(si->bg_data_blks + si->bg_node_blks)));
+}
+
+static ssize_t moved_blocks_background_show(struct f2fs_attr *a,
+				struct f2fs_sb_info *sbi, char *buf)
+{
+	struct f2fs_stat_info *si = F2FS_STAT(sbi);
+
+	return sprintf(buf, "%llu\n",
+		(unsigned long long)(si->bg_data_blks + si->bg_node_blks));
+}
+
+static ssize_t avg_vblocks_show(struct f2fs_attr *a,
+		struct f2fs_sb_info *sbi, char *buf)
+{
+	struct f2fs_stat_info *si = F2FS_STAT(sbi);
+
+	si->dirty_count = dirty_segments(sbi);
+	f2fs_update_sit_info(sbi);
+	return sprintf(buf, "%llu\n", (unsigned long long)(si->avg_vblocks));
+}
+#endif
+
 static ssize_t __sbi_show_value(struct f2fs_attr *a,
 		struct f2fs_sb_info *sbi, char *buf,
 		unsigned char *value)
@@ -233,7 +298,7 @@ static void __sbi_store_value(struct f2fs_attr *a,
 		break;
 	default:
 		f2fs_bug_on(sbi, 1);
-		f2fs_msg(sbi->sb, KERN_ERR, "store sysfs node value with wrong type");
+		f2fs_err(sbi, "store sysfs node value with wrong type");
 	}
 }
 
@@ -355,6 +420,15 @@ out:
 		sbi->iostat_enable = !!t;
 		if (!sbi->iostat_enable)
 			f2fs_reset_iostat(sbi);
+		return count;
+	}
+
+	if (!strcmp(a->attr.name, "iostat_period_ms")) {
+		if (t < MIN_IOSTAT_PERIOD_MS || t > MAX_IOSTAT_PERIOD_MS)
+			return -EINVAL;
+		spin_lock(&sbi->iostat_lock);
+		sbi->iostat_period_ms = (unsigned int)t;
+		spin_unlock(&sbi->iostat_lock);
 		return count;
 	}
 
