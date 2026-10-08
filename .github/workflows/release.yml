@@ -1,12 +1,10 @@
-name: "Nightly Kernel"
+name: "Release Kernel"
 
 env:
   OUT_DIR: "${{ github.workspace }}/out"
 
 on:
-  push:
-    branches:
-      - 'phantasia-ksu'
+  workflow_dispatch:
 
 jobs:
   Set-repos:
@@ -116,7 +114,7 @@ jobs:
         run: |
           COMMIT_HASH=$(git rev-parse --short HEAD)
           echo "commit_hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
-          echo "build_type=nightly" >> $GITHUB_OUTPUT
+          echo "build_type=release" >> $GITHUB_OUTPUT
 
       - name: "Get toolchains"
         env:
@@ -285,4 +283,25 @@ jobs:
         with:
           name: "Phantasia-rubyx-ksun-susfs-${{ steps.build-info.outputs.commit_hash }}-${{ steps.build-info.outputs.build_type }}"
           path: AnyKernel3/*
-          retention-days: 7
+          retention-days: 30
+
+      - name: "Create GitHub Release"
+        uses: softprops/action-gh-release@v2
+        if: ${{ env.useAnykernel == 'true' && env.release == 'true' }}
+        with:
+          tag_name: v${{ env.builddate }}.${{ github.run_number }}
+          name: v${{ env.builddate }}.${{ github.run_number }}
+          prerelease: false
+          draft: false
+          generate_release_notes: false
+          body: |
+            rubyx kernel patched with [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) ${{ steps.integrate-kernelsu-next.outputs.KERNELSU_NEXT_VERSION }} + [SuSFS patches](https://gitlab.com/simonpunk/susfs4ksu).
+
+            **Installation:**
+            1. Flash the kernel from this release.
+            2. Download and install the KernelSU-Next manager APK from here:
+            > [Stable Version](https://github.com/KernelSU-Next/KernelSU-Next/releases) || [Nightly Version](https://nightly.link/KernelSU-Next/KernelSU-Next/workflows/build-manager-ci/next/Manager)
+
+            3. Download and install the SuSFS Module from here: https://github.com/sidex15/susfs4ksu-module/releases/latest
+          files: "Phantasia-rubyx-ksun-susfs-${{ steps.build-info.outputs.commit_hash }}-${{ steps.build-info.outputs.build_type }}.zip"
+          fail_on_unmatched_files: true
