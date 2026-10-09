@@ -1314,6 +1314,20 @@ static struct usb_function *hidg_alloc(struct usb_function_instance *fi)
 	}
 	hidg->use_out_ep = !opts->no_out_endpoint;
 
+	/* HACK, replace content, duplicate code from above */
+	hidg->bInterfaceSubClass = hid_data.subclass;
+	hidg->bInterfaceProtocol = hid_data.protocol;
+	hidg->report_length = hid_data.report_length;
+	hidg->report_desc_length = hid_data.report_desc_length;
+	hidg->report_desc = kmemdup(hid_data.report_desc,
+			hid_data.report_desc_length,
+			GFP_KERNEL);
+	if (!hidg->report_desc) {
+		kfree(hidg);
+		mutex_unlock(&opts->lock);
+		return ERR_PTR(-ENOMEM);
+	}
+
 	++opts->refcnt;
 	mutex_unlock(&opts->lock);
 

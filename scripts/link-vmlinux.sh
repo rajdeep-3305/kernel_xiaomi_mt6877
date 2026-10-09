@@ -316,7 +316,6 @@ if [ -n "${CONFIG_LTO_CLANG}" ]; then
 	# Call recordmcount if needed
 	recordmcount vmlinux.o
 fi
-
 btf_vmlinux_bin_o=""
 if [ -n "${CONFIG_DEBUG_INFO_BTF}" ]; then
 	if gen_btf .tmp_vmlinux.btf .btf.vmlinux.bin.o ; then
