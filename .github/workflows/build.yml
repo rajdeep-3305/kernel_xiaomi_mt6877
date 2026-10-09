@@ -235,9 +235,19 @@ jobs:
           args: ${{ steps.generate-args.outputs.args }}
         run: |
           echo "PATH Variable: $PATH"
+          # Run make and capture exit code while filtering output
+          set -o pipefail
           make ${{ env.args }} V=0 2>&1 | \
+            tee build.log | \
             grep --line-buffered --color=always -E \
             'warning:|error:|undefined reference|No rule to make target|KernelSU|SUSFS|LTO|MODPOST|VMLINUX|^[[:space:]]*(GEN|KSYM|SORTEX|SYSMAP|OBJCOPY|GZIP|DTC|CAT)\b'
+          BUILD_EXIT=${PIPESTATUS[0]}
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo "Build failed with exit code $BUILD_EXIT"
+            # Show last 100 lines of build log for debugging
+            tail -100 build.log
+            exit $BUILD_EXIT
+          fi
           echo "Build finished!"
 
           # Copy kernel artifacts to root AnyKernel3 (not ruby/AnyKernel3)
