@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Combined DTS for Xiaomi Redmi Note 12 Pro (ruby) on MT6877
+ *
+ * This merges the base mt6877.dts with ruby device customizations
+ * into a single flat DTB, avoiding the base+overlay split that
+ * requires __symbols__ fixup support in the bootloader.
+ *
+ * Copyright (C) 2021 MediaTek Inc.
+ * Copyright (C) 2022 XiaoMi, Inc.
+ */
+
+/*
+ * MTK vendor DT sources gate the battery node and USB-PD notifier count
+ * behind CONFIG_MTK_GAUGE_VERSION, but that symbol is not backed by Kconfig
+ * in this 6.6 tree. Define the ruby value here so the combined DTB expands
+ * the same gauge-v30 data as the original device configuration.
+ */
+#ifndef CONFIG_MTK_GAUGE_VERSION
+#define CONFIG_MTK_GAUGE_VERSION 30
+#endif
+
+/* Include the full base MT6877 DTS */
+#include "mt6877.dts"
+
+/* Include ruby device customizations */
+#include "mediatek/ruby-mt6877.dtsi"
+#include "mediatek/ruby/cust.dtsi"
+
+/ {
+	model = "MT6877";
+	compatible = "xiaomi,ruby", "mediatek,mt6877", "mediatek,MT6877";
+};
