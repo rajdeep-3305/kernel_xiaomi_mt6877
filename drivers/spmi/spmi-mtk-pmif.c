@@ -41,6 +41,7 @@ struct pmif_data {
 	const u32	*regs;
 	const u32	*spmimst_regs;
 	u32	soc_chan;
+	bool	require_init_done;
 };
 
 struct pmif {
@@ -323,7 +324,7 @@ static int pmif_spmi_read_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 		return -EINVAL;
 	}
 
-	if (len > 4) {
+	if (!len || len > 4) {
 		dev_err(&ctrl->dev, "pmif supports 1..4 bytes per trans, but:%zu requested", len);
 
 		return -EINVAL;
@@ -352,18 +353,19 @@ static int pmif_spmi_read_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 	}
 
 	/* Send the command. */
-	cmd = (opc << 30) | (sid << 24) | ((len - 1) << 16) | addr;
+	cmd = ((u32)opc << 30) | (sid << 24) | ((len - 1) << 16) | addr;
 	pmif_writel(arb, cmd, inf_reg->ch_send);
-	raw_spin_unlock_irqrestore(&arb->lock, flags);
 
 	/*
 	 * Wait for Software Interface FSM state to be WFVLDCLR,
-	 * read the data and clear the valid flag.
+	 * read the data and clear the valid flag. Keep the channel locked until
+	 * the response is consumed; another PMIC shares this software interface.
 	 */
 	ret = readl_poll_timeout_atomic(arb->base + arb->data->regs[inf_reg->ch_sta],
 					data, GET_SWINF(data) == SWINF_WFVLDCLR,
 					PMIF_DELAY_US, PMIF_TIMEOUT_US);
 	if (ret < 0) {
+		raw_spin_unlock_irqrestore(&arb->lock, flags);
 		dev_err(&ctrl->dev, "failed to wait for SWINF_WFVLDCLR\n");
 		return ret;
 	}
@@ -371,6 +373,7 @@ static int pmif_spmi_read_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 	data = pmif_readl(arb, inf_reg->rdata);
 	memcpy(buf, &data, len);
 	pmif_writel(arb, 1, inf_reg->ch_rdy);
+	raw_spin_unlock_irqrestore(&arb->lock, flags);
 
 	return 0;
 }
@@ -381,10 +384,13 @@ static int pmif_spmi_write_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 	struct pmif *arb = spmi_controller_get_drvdata(ctrl);
 	struct ch_reg *inf_reg;
 	int ret;
-	u32 data, wdata, cmd;
+	u32 data, wdata = 0, cmd;
 	unsigned long flags;
 
-	if (len > 4) {
+	if (sid & ~0xf)
+		return -EINVAL;
+
+	if (!len || len > 4) {
 		dev_err(&ctrl->dev, "pmif supports 1..4 bytes per trans, but:%zu requested", len);
 
 		return -EINVAL;
@@ -421,7 +427,7 @@ static int pmif_spmi_write_cmd(struct spmi_controller *ctrl, u8 opc, u8 sid,
 	pmif_writel(arb, wdata, inf_reg->wdata);
 
 	/* Send the command. */
-	cmd = (opc << 30) | BIT(29) | (sid << 24) | ((len - 1) << 16) | addr;
+	cmd = ((u32)opc << 30) | BIT(29) | (sid << 24) | ((len - 1) << 16) | addr;
 	pmif_writel(arb, cmd, inf_reg->ch_send);
 	raw_spin_unlock_irqrestore(&arb->lock, flags);
 
@@ -438,6 +444,18 @@ static const struct pmif_data mt8195_pmif_arb = {
 	.regs = mt8195_regs,
 	.spmimst_regs = mt8195_spmi_regs,
 	.soc_chan = 2,
+};
+
+/*
+ * MT6877 uses the same PMIF/SPMI register offsets as MT8195 (mt6833_regs
+ * and mt6853_spmi_regs in the Xiaomi 4.19 driver). Firmware initializes
+ * this controller before Linux; adopt it without resetting shared rails.
+ */
+static const struct pmif_data mt6877_pmif_arb = {
+	.regs = mt8195_regs,
+	.spmimst_regs = mt8195_spmi_regs,
+	.soc_chan = 2,
+	.require_init_done = true,
 };
 
 static int mtk_spmi_probe(struct platform_device *pdev)
@@ -487,6 +505,13 @@ static int mtk_spmi_probe(struct platform_device *pdev)
 		goto err_put_clks;
 	}
 
+	if (arb->data->require_init_done &&
+	    !(pmif_readl(arb, PMIF_INIT_DONE) & BIT(0))) {
+		err = dev_err_probe(&pdev->dev, -ENODEV,
+				    "PMIF was not initialized by firmware\n");
+		goto err_domain_remove;
+	}
+
 	ctrl->cmd = pmif_arb_cmd;
 	ctrl->read_cmd = pmif_spmi_read_cmd;
 	ctrl->write_cmd = pmif_spmi_write_cmd;
@@ -522,9 +547,9 @@ static void mtk_spmi_remove(struct platform_device *pdev)
 	struct spmi_controller *ctrl = platform_get_drvdata(pdev);
 	struct pmif *arb = spmi_controller_get_drvdata(ctrl);
 
+	spmi_controller_remove(ctrl);
 	clk_bulk_disable_unprepare(arb->nclks, arb->clks);
 	clk_bulk_put(arb->nclks, arb->clks);
-	spmi_controller_remove(ctrl);
 	spmi_controller_put(ctrl);
 }
 
@@ -532,6 +557,9 @@ static const struct of_device_id mtk_spmi_match_table[] = {
 	{
 		.compatible = "mediatek,mt6873-spmi",
 		.data = &mt6873_pmif_arb,
+	}, {
+		.compatible = "mediatek,mt6877-pmif-m",
+		.data = &mt6877_pmif_arb,
 	}, {
 		.compatible = "mediatek,mt8195-spmi",
 		.data = &mt8195_pmif_arb,
