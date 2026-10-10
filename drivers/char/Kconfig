@@ -423,3 +423,6 @@ config ADI
 	  driver include crash and makedumpfile.
 
 endmenu
+
+source "drivers/char/rpmb/Kconfig"
+
