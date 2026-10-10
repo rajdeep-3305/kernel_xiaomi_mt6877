@@ -9,6 +9,7 @@
 #include <linux/arm-smccc.h>
 #include <linux/bitfield.h>
 #include <linux/clk.h>
+#include <linux/compat.h>
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -21,6 +22,11 @@
 #include <linux/regulator/consumer.h>
 #include <linux/reset.h>
 #include <linux/soc/mediatek/mtk_sip_svc.h>
+#include <linux/uaccess.h>
+
+#include <scsi/scsi.h>
+#include <scsi/scsi_device.h>
+#include <asm/unaligned.h>
 
 #include <ufs/ufshcd.h>
 #include "ufshcd-pltfrm.h"
@@ -29,6 +35,166 @@
 #include "ufs-mediatek.h"
 
 static int  ufs_mtk_config_mcq(struct ufs_hba *hba, bool irq);
+
+/* Legacy Microtrust userspace submits up to three commands on a UFS fd. */
+#define UFS_MTK_IOCTL_RPMB	0x5391
+#define UFS_MTK_RPMB_FRAME_SIZE	512
+#define UFS_MTK_RPMB_WRITE	BIT(0)
+
+struct ufs_mtk_rpmb_cmd {
+	u32 flags;
+	u32 nframes;
+	void __user *frames;
+};
+
+#ifdef CONFIG_COMPAT
+struct ufs_mtk_rpmb_cmd32 {
+	u32 flags;
+	u32 nframes;
+	compat_uptr_t frames;
+};
+#endif
+
+static int ufs_mtk_rpmb_transfer(struct scsi_device *sdev, void *frames,
+			       u32 nframes, bool write)
+{
+	struct scsi_sense_hdr sshdr;
+	int resid, ret, retries = 10;
+	struct scsi_exec_args args = { .sshdr = &sshdr, .resid = &resid };
+	u32 size = nframes * UFS_MTK_RPMB_FRAME_SIZE;
+	u8 cdb[12] = { 0 };
+
+	cdb[0] = write ? SECURITY_PROTOCOL_OUT : SECURITY_PROTOCOL_IN;
+	cdb[1] = 0xec;
+	put_unaligned_be16(1, cdb + 2);
+	put_unaligned_be32(size, cdb + 6);
+
+	do {
+		memset(&sshdr, 0, sizeof(sshdr));
+		resid = 0;
+		ret = scsi_execute_cmd(sdev, cdb,
+				       write ? REQ_OP_DRV_OUT : REQ_OP_DRV_IN,
+				       frames, size, 30 * HZ, 3, &args);
+	} while (ret > 0 && scsi_sense_valid(&sshdr) &&
+		 sshdr.sense_key == UNIT_ATTENTION && --retries);
+
+	if (ret < 0)
+		return ret;
+	return ret || resid ? -EIO : 0;
+}
+
+static int ufs_mtk_ioctl(struct ufs_hba *hba, unsigned int cmd,
+			 void __user *buffer)
+{
+	struct ufs_mtk_host *host = ufshcd_get_variant(hba);
+	struct ufs_mtk_rpmb_cmd cmds[3];
+	void *frames[3] = { NULL };
+	struct scsi_device *sdev;
+	u16 lun = (UFS_UPIU_RPMB_WLUN & ~UFS_UPIU_WLUN_ID) | SCSI_W_LUN_BASE;
+	u8 rw_size;
+	int i, ncmds = 0, ret;
+
+	if (cmd != UFS_MTK_IOCTL_RPMB)
+		return -EINVAL;
+
+	/* Keep the original block-device DAC and SELinux access checks. */
+#ifdef CONFIG_COMPAT
+	if (in_compat_syscall()) {
+		struct ufs_mtk_rpmb_cmd32 cmds32[3];
+
+		if (copy_from_user(cmds32, buffer, sizeof(cmds32)))
+			return -EFAULT;
+		for (i = 0; i < ARRAY_SIZE(cmds); i++) {
+			cmds[i].flags = cmds32[i].flags;
+			cmds[i].nframes = cmds32[i].nframes;
+			cmds[i].frames = compat_ptr(cmds32[i].frames);
+		}
+	} else {
+#endif
+		if (copy_from_user(cmds, buffer, sizeof(cmds)))
+			return -EFAULT;
+#ifdef CONFIG_COMPAT
+	}
+#endif
+
+	sdev = scsi_device_lookup(hba->host, 0, 0, lun);
+	if (!sdev)
+		return -ENODEV;
+	if (!scsi_device_online(sdev)) {
+		ret = -ENODEV;
+		goto out_put;
+	}
+	ret = scsi_autopm_get_device(sdev);
+	if (ret)
+		goto out_put;
+
+	ret = ufshcd_read_desc_param(hba, QUERY_DESC_IDN_GEOMETRY, 0,
+				     GEOMETRY_DESC_PARAM_RPMB_RW_SIZE,
+				     &rw_size, sizeof(rw_size));
+	if (ret)
+		goto out_pm;
+	if (!rw_size) {
+		ret = -EINVAL;
+		goto out_pm;
+	}
+
+	/* Validate and copy the complete request before issuing any command. */
+	for (i = 0; i < ARRAY_SIZE(cmds) && cmds[i].nframes; i++) {
+		size_t size;
+
+		if (cmds[i].nframes > rw_size) {
+			ret = -EINVAL;
+			goto out_free;
+		}
+		size = cmds[i].nframes * UFS_MTK_RPMB_FRAME_SIZE;
+		frames[i] = kzalloc(size, GFP_KERNEL);
+		if (!frames[i]) {
+			ret = -ENOMEM;
+			goto out_free;
+		}
+		if (cmds[i].flags & UFS_MTK_RPMB_WRITE) {
+			if (copy_from_user(frames[i], cmds[i].frames, size)) {
+				ret = -EFAULT;
+				goto out_free;
+			}
+		} else if (!access_ok(cmds[i].frames, size)) {
+			ret = -EFAULT;
+			goto out_free;
+		}
+		ncmds++;
+	}
+	if (!ncmds) {
+		ret = -EINVAL;
+		goto out_free;
+	}
+
+	/* Counter/result exchanges must not interleave with another caller. */
+	ret = mutex_lock_interruptible(&host->rpmb_lock);
+	if (ret)
+		goto out_free;
+	for (i = 0; i < ncmds; i++) {
+		bool write = cmds[i].flags & UFS_MTK_RPMB_WRITE;
+
+		ret = ufs_mtk_rpmb_transfer(sdev, frames[i], cmds[i].nframes,
+					   write);
+		if (ret)
+			break;
+		if (!write && copy_to_user(cmds[i].frames, frames[i],
+					   cmds[i].nframes * UFS_MTK_RPMB_FRAME_SIZE)) {
+			ret = -EFAULT;
+			break;
+		}
+	}
+	mutex_unlock(&host->rpmb_lock);
+out_free:
+	for (i = 0; i < ARRAY_SIZE(frames); i++)
+		kfree_sensitive(frames[i]);
+out_pm:
+	scsi_autopm_put_device(sdev);
+out_put:
+	scsi_device_put(sdev);
+	return ret;
+}
 
 #define CREATE_TRACE_POINTS
 #include "ufs-mediatek-trace.h"
@@ -620,6 +786,9 @@ static void ufs_mtk_init_host_caps(struct ufs_hba *hba)
 	if (of_property_read_bool(np, "mediatek,ufs-broken-vcc"))
 		host->caps |= UFS_MTK_CAP_BROKEN_VCC;
 
+	if (of_property_read_bool(np, "mediatek,ufs-disable-mcq"))
+		host->caps |= UFS_MTK_CAP_DISABLE_MCQ;
+
 	if (of_property_read_bool(np, "mediatek,ufs-pmc-via-fastauto"))
 		host->caps |= UFS_MTK_CAP_PMC_VIA_FASTAUTO;
 
@@ -920,6 +1089,13 @@ static void ufs_mtk_init_mcq_irq(struct ufs_hba *hba)
 	host->mcq_nr_intr = UFSHCD_MAX_Q_NR;
 	pdev = container_of(hba->dev, struct platform_device, dev);
 
+	/* Invalidate queue IRQs before honoring a DT-disabled MCQ mode. */
+	for (i = 0; i < host->mcq_nr_intr; i++)
+		host->mcq_intr_info[i].irq = MTK_MCQ_INVALID_IRQ;
+
+	if (host->caps & UFS_MTK_CAP_DISABLE_MCQ)
+		goto failed;
+
 	for (i = 0; i < host->mcq_nr_intr; i++) {
 		/* irq index 0 is legacy irq, sq/cq irq start from index 1 */
 		irq = platform_get_irq(pdev, i + 1);
@@ -967,6 +1143,7 @@ static int ufs_mtk_init(struct ufs_hba *hba)
 	}
 
 	host->hba = hba;
+	mutex_init(&host->rpmb_lock);
 	ufshcd_set_variant(hba, host);
 
 	id = of_match_device(ufs_mtk_of_match, dev);
@@ -1648,6 +1825,12 @@ static int ufs_mtk_clk_scale_notify(struct ufs_hba *hba, bool scale_up,
 
 static int ufs_mtk_get_hba_mac(struct ufs_hba *hba)
 {
+	struct ufs_mtk_host *host = ufshcd_get_variant(hba);
+
+	/* MCQ is explicitly disabled on Ruby; use the legacy UFS path. */
+	if (host->caps & UFS_MTK_CAP_DISABLE_MCQ)
+		return -EPERM;
+
 	return MAX_SUPP_MAC;
 }
 
@@ -1770,6 +1953,7 @@ static int ufs_mtk_config_esi(struct ufs_hba *hba)
 static const struct ufs_hba_variant_ops ufs_hba_mtk_vops = {
 	.name                = "mediatek.ufshci",
 	.init                = ufs_mtk_init,
+	.ioctl               = ufs_mtk_ioctl,
 	.get_ufs_hci_version = ufs_mtk_get_ufs_hci_version,
 	.setup_clocks        = ufs_mtk_setup_clocks,
 	.hce_enable_notify   = ufs_mtk_hce_enable_notify,
@@ -1801,43 +1985,19 @@ static int ufs_mtk_probe(struct platform_device *pdev)
 {
 	int err;
 	struct device *dev = &pdev->dev;
-	struct device_node *reset_node;
-	struct platform_device *reset_pdev;
-	struct device_link *link;
 
-	reset_node = of_find_compatible_node(NULL, NULL,
-					     "ti,syscon-reset");
-	if (!reset_node) {
-		dev_notice(dev, "find ti,syscon-reset fail\n");
-		goto skip_reset;
-	}
-	reset_pdev = of_find_device_by_node(reset_node);
-	if (!reset_pdev) {
-		dev_notice(dev, "find reset_pdev fail\n");
-		goto skip_reset;
-	}
-	link = device_link_add(dev, &reset_pdev->dev,
-		DL_FLAG_AUTOPROBE_CONSUMER);
-	put_device(&reset_pdev->dev);
-	if (!link) {
-		dev_notice(dev, "add reset device_link fail\n");
-		goto skip_reset;
-	}
-	/* supplier is not probed */
-	if (link->status == DL_STATE_DORMANT) {
-		err = -EPROBE_DEFER;
-		goto out;
-	}
+	/*
+	 * MT6877 stock UFS bring-up does not gate host probe on a separate
+	 * syscon-reset supplier link. Let the host follow the normal platform
+	 * init path so the controller can probe as soon as its real resources
+	 * are available.
+	 */
 
-skip_reset:
 	/* perform generic probe */
 	err = ufshcd_pltfrm_init(pdev, &ufs_hba_mtk_vops);
 
-out:
 	if (err)
 		dev_err(dev, "probe failed %d\n", err);
-
-	of_node_put(reset_node);
 	return err;
 }
 

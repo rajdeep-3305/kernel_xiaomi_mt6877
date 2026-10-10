@@ -136,6 +136,7 @@ enum ufs_mtk_host_caps {
 	UFS_MTK_CAP_VA09_PWR_CTRL              = 1 << 1,
 	UFS_MTK_CAP_DISABLE_AH8                = 1 << 2,
 	UFS_MTK_CAP_BROKEN_VCC                 = 1 << 3,
+	UFS_MTK_CAP_DISABLE_MCQ                = 1 << 8,
 	UFS_MTK_CAP_PMC_VIA_FASTAUTO           = 1 << 6,
 };
 
@@ -166,6 +167,7 @@ struct ufs_mtk_mcq_intr_info {
 };
 
 struct ufs_mtk_host {
+	struct mutex rpmb_lock;
 	struct phy *mphy;
 	struct pm_qos_request pm_qos_req;
 	struct regulator *reg_va09;
