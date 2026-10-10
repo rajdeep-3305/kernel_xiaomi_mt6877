@@ -153,3 +153,20 @@ config ARM_SUN8I_A33_MBUS_DEVFREQ
 source "drivers/devfreq/event/Kconfig"
 
 endif # PM_DEVFREQ
+
+config MTK_QOS_SUPPORT
+	bool "MTK QOS SUPPORT"
+	help
+	  This kernel config can be used to enable MTK QOS support.
+	  MTK QOS can support adjust vcore voltage and dram
+	  frequency
+	  If unsure, say N.
+
+config MTK_DVFSRC_MT6877_PRETEST
+	tristate "MTK_DVFSRC_MT6877_PRETEST"
+	help
+	  This is test for pre-testing for mt6877 on MT6853 phone
+	  It just for test, and it will remove after mt6877 chip
+	  is ready.
+	  If unsure, say N.
+
