@@ -99,6 +99,9 @@
 #include <trace/hooks/sched.h>
 #include <trace/hooks/cgroup.h>
 #include <trace/hooks/dtask.h>
+#ifdef CONFIG_MTK_TASK_TURBO
+#include "../../drivers/misc/mediatek/include/mt-plat/turbo_common.h"
+#endif
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(ipi_send_cpu);
 EXPORT_TRACEPOINT_SYMBOL_GPL(ipi_send_cpumask);
@@ -1815,6 +1818,10 @@ uclamp_update_active_tasks(struct cgroup_subsys_state *css)
 }
 
 static void cpu_util_update_eff(struct cgroup_subsys_state *css);
+#if defined(CONFIG_MTK_RUBY_BIG_TASK_ROTATION) || defined(CONFIG_MTK_FPSGO_V3) || \
+	defined(CONFIG_MTK_RUBY_SCHED_PREFER)
+static void ruby_apply_group_uclamp_req(struct task_group *tg);
+#endif
 #endif
 
 #ifdef CONFIG_SYSCTL
@@ -4880,6 +4887,15 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 	 * Make sure we do not leak PI boosting priority to the child.
 	 */
 	p->prio = current->normal_prio;
+#ifdef CONFIG_MTK_TASK_TURBO
+	if (unlikely(is_turbo_task(current))) {
+		p->static_prio = NICE_TO_PRIO(current->nice_backup);
+		if (!task_has_dl_policy(p) && !task_has_rt_policy(p)) {
+			p->prio = p->normal_prio = p->static_prio;
+			set_load_weight(p, false);
+		}
+	}
+#endif
 	trace_android_rvh_prepare_prio_fork(p);
 
 	uclamp_fork(p);
@@ -4909,8 +4925,12 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 		return -EAGAIN;
 	else if (rt_prio(p->prio))
 		p->sched_class = &rt_sched_class;
-	else
+	else {
 		p->sched_class = &fair_sched_class;
+#ifdef CONFIG_MTK_TASK_TURBO
+		p->nice_backup = PRIO_TO_NICE(p->prio);
+#endif
+	}
 
 	init_entity_runnable_average(&p->se);
 	trace_android_rvh_finish_prio_fork(p);
@@ -7244,6 +7264,41 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 	struct rq *rq;
 	int update = 0;
 
+#ifdef CONFIG_MTK_TASK_TURBO
+	/* Keep the saved nice as the PI baseline, then restore the turbo nice
+	 * when the last rtmutex donor goes away.
+	 */
+	rq = __task_rq_lock(p, &rf);
+	update_rq_clock(rq);
+	if (unlikely(is_turbo_task(p) && fair_policy(p->policy))) {
+		int nice = p->nice_backup;
+
+		if (!pi_task) {
+			nice = rlimit_to_nice(task_rlimit(p, RLIMIT_NICE));
+			if (nice > MAX_NICE)
+				nice = p->nice_backup;
+		}
+		if (nice >= MIN_NICE && nice <= MAX_NICE) {
+			queued = task_on_rq_queued(p);
+			running = task_current(rq, p);
+			if (queued)
+				dequeue_task(rq, p, DEQUEUE_SAVE | DEQUEUE_NOCLOCK);
+			if (running)
+				put_prev_task(rq, p);
+
+			p->static_prio = NICE_TO_PRIO(nice);
+			p->prio = p->normal_prio = normal_prio(p);
+			set_load_weight(p, false);
+
+			if (queued)
+				enqueue_task(rq, p, ENQUEUE_RESTORE | ENQUEUE_NOCLOCK);
+			if (running)
+				set_next_task(rq, p);
+		}
+	}
+	__task_rq_unlock(rq, &rf);
+#endif
+
 	trace_android_rvh_rtmutex_prepare_setprio(p, pi_task);
 	/* XXX used to be waiter->prio, not waiter->task->prio */
 	prio = __rt_effective_prio(pi_task, p->normal_prio);
@@ -7370,10 +7425,20 @@ void set_user_nice(struct task_struct *p, long nice)
 	int old_prio;
 	struct rq_flags rf;
 	struct rq *rq;
+#ifdef CONFIG_MTK_TASK_TURBO
+	bool turbo_nice = nice == 0xbeef || nice == 0xbeee;
+#endif
 
 	trace_android_rvh_set_user_nice(p, &nice, &allowed);
-	if ((task_nice(p) == nice || nice < MIN_NICE || nice > MAX_NICE) && !allowed)
+#ifdef CONFIG_MTK_TASK_TURBO
+	if (((nice < MIN_NICE || nice > MAX_NICE) && !turbo_nice) &&
+	    !allowed)
 		return;
+#else
+	if ((task_nice(p) == nice || nice < MIN_NICE || nice > MAX_NICE) &&
+	    !allowed)
+		return;
+#endif
 	/*
 	 * We have to be careful, if called from sys_setpriority(),
 	 * the task might be in the middle of scheduling on another CPU.
@@ -7382,6 +7447,17 @@ void set_user_nice(struct task_struct *p, long nice)
 	update_rq_clock(rq);
 
 	trace_android_rvh_set_user_nice_locked(p, &nice);
+#ifdef CONFIG_MTK_TASK_TURBO
+	if (!turbo_nice)
+		p->nice_backup = nice;
+	if (is_turbo_task(p)) {
+		nice = rlimit_to_nice(task_rlimit(p, RLIMIT_NICE));
+		if (nice > MAX_NICE)
+			nice = p->nice_backup;
+	} else {
+		nice = p->nice_backup;
+	}
+#endif
 	if (task_nice(p) == nice)
 		goto out_unlock;
 
@@ -7835,6 +7911,9 @@ static int __sched_setscheduler(struct task_struct *p,
 	int queue_flags = DEQUEUE_SAVE | DEQUEUE_MOVE | DEQUEUE_NOCLOCK;
 	struct rq *rq;
 	bool cpuset_locked = false;
+#ifdef CONFIG_MTK_TASK_TURBO
+	int turbo_sched_nice = MAX_NICE + 1;
+#endif
 
 	/* The pi code expects interrupts enabled */
 	BUG_ON(pi && in_interrupt());
@@ -7986,6 +8065,17 @@ change:
 	oldprio = p->prio;
 
 	newprio = __normal_prio(policy, attr->sched_priority, attr->sched_nice);
+#ifdef CONFIG_MTK_TASK_TURBO
+	if (!(attr->sched_flags & SCHED_FLAG_KEEP_PARAMS) &&
+	    fair_policy(policy) && is_turbo_task(p)) {
+		p->nice_backup = attr->sched_nice;
+		turbo_sched_nice = rlimit_to_nice(task_rlimit(p, RLIMIT_NICE));
+		if (turbo_sched_nice > MAX_NICE)
+			turbo_sched_nice = p->nice_backup;
+		newprio = __normal_prio(policy, attr->sched_priority,
+					turbo_sched_nice);
+	}
+#endif
 	if (pi) {
 		/*
 		 * Take priority boosted tasks into account. If the new
@@ -8010,6 +8100,15 @@ change:
 
 	if (!(attr->sched_flags & SCHED_FLAG_KEEP_PARAMS)) {
 		__setscheduler_params(p, attr);
+#ifdef CONFIG_MTK_TASK_TURBO
+		if (turbo_sched_nice <= MAX_NICE) {
+			p->static_prio = NICE_TO_PRIO(turbo_sched_nice);
+			p->normal_prio = normal_prio(p);
+			set_load_weight(p, true);
+		} else if (fair_policy(p->policy)) {
+			p->nice_backup = PRIO_TO_NICE(p->static_prio);
+		}
+#endif
 		__setscheduler_prio(p, newprio);
 		trace_android_rvh_setscheduler(p);
 	}
@@ -10834,6 +10933,10 @@ static int cpu_cgroup_css_online(struct cgroup_subsys_state *css)
 	/* Propagate the effective uclamp value for the new group */
 	mutex_lock(&uclamp_mutex);
 	rcu_read_lock();
+#if defined(CONFIG_MTK_RUBY_BIG_TASK_ROTATION) || defined(CONFIG_MTK_FPSGO_V3) || \
+	defined(CONFIG_MTK_RUBY_SCHED_PREFER)
+	ruby_apply_group_uclamp_req(tg);
+#endif
 	cpu_util_update_eff(css);
 	rcu_read_unlock();
 	mutex_unlock(&uclamp_mutex);
@@ -10979,12 +11082,222 @@ capacity_from_percent(char *buf)
 	return req;
 }
 
+#if defined(CONFIG_MTK_RUBY_BIG_TASK_ROTATION) || defined(CONFIG_MTK_FPSGO_V3) || \
+	defined(CONFIG_MTK_RUBY_SCHED_PREFER)
+static bool ruby_rotation_top_app_boost;
+static unsigned int ruby_fpsgo_top_app_pct;
+static unsigned int ruby_gbe_top_app_pct;
+static unsigned int ruby_perfserv_group_pct[4];
+static int ruby_perfserv_group_boost[4];
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+static bool ruby_perfserv_group_prefer_idle[4];
+#endif
+
+static int ruby_perfserv_group_index(struct task_group *tg)
+{
+	char path[32];
+	static const char * const paths[] = {
+		"/", "/foreground", "/background", "/top-app",
+	};
+	int i;
+
+	if (!tg->css.cgroup ||
+	    cgroup_path(tg->css.cgroup, path, sizeof(path)) <= 0)
+		return -1;
+	for (i = 0; i < ARRAY_SIZE(paths); i++)
+		if (!strcmp(path, paths[i]))
+			return i;
+	return -1;
+}
+
+static u64 ruby_group_uclamp_min(struct task_group *tg, unsigned int group)
+{
+	u64 util;
+
+	/* The root request is a ceiling initialized and updated by the core. */
+	if (tg == &root_task_group)
+		return tg->uclamp_req[UCLAMP_MIN].value;
+	util = tg->uclamp_pct[UCLAMP_MIN] << SCHED_CAPACITY_SHIFT;
+	util = DIV_ROUND_CLOSEST_ULL(util, UCLAMP_PERCENT_SCALE);
+	util = max_t(u64, util,
+		DIV_ROUND_CLOSEST_ULL((u64)ruby_perfserv_group_pct[group] <<
+					SCHED_CAPACITY_SHIFT, 100));
+	if (ruby_perfserv_group_boost[group] > 0)
+		util = max_t(u64, util,
+			DIV_ROUND_CLOSEST_ULL(
+				(u64)ruby_perfserv_group_boost[group] <<
+				SCHED_CAPACITY_SHIFT, 100));
+	if (group == 3) {
+		util = max_t(u64, util,
+			DIV_ROUND_CLOSEST_ULL((u64)ruby_fpsgo_top_app_pct <<
+					SCHED_CAPACITY_SHIFT, 100));
+		util = max_t(u64, util,
+			DIV_ROUND_CLOSEST_ULL((u64)ruby_gbe_top_app_pct <<
+					SCHED_CAPACITY_SHIFT, 100));
+		if (ruby_rotation_top_app_boost)
+			util = SCHED_CAPACITY_SCALE;
+	}
+
+	return util;
+}
+
+/* Caller holds uclamp_mutex and the RCU read lock. */
+static void ruby_apply_group_uclamp_req(struct task_group *tg)
+{
+	int group = ruby_perfserv_group_index(tg);
+	u64 util;
+
+	if (group < 0)
+		return;
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	WRITE_ONCE(tg->ruby_prefer_idle,
+		   READ_ONCE(ruby_perfserv_group_prefer_idle[group]));
+#endif
+	util = ruby_group_uclamp_min(tg, group);
+	if (tg->uclamp_req[UCLAMP_MIN].value != util)
+		uclamp_se_set(&tg->uclamp_req[UCLAMP_MIN], util, false);
+}
+
+/* Caller holds uclamp_mutex. Preserve PowerHAL's requested clamp as baseline. */
+static int ruby_update_group_uclamp(unsigned int group)
+{
+	struct task_group *tg;
+	int ret = -ENOENT;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(tg, &task_groups, list) {
+		if (ruby_perfserv_group_index(tg) != group ||
+		    !css_tryget_online(&tg->css))
+			continue;
+
+		ruby_apply_group_uclamp_req(tg);
+		cpu_util_update_eff(&tg->css);
+		css_put(&tg->css);
+		ret = 0;
+		break;
+	}
+	rcu_read_unlock();
+	return ret;
+}
+
+static int ruby_update_top_app_uclamp(void)
+{
+	return ruby_update_group_uclamp(3);
+}
+
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+int ruby_perfserv_set_group_uclamp(unsigned int group, unsigned int percent)
+{
+	int ret;
+
+	if (group >= ARRAY_SIZE(ruby_perfserv_group_pct) || percent > 100)
+		return -ERANGE;
+	static_branch_enable(&sched_uclamp_used);
+	mutex_lock(&uclamp_mutex);
+	ruby_perfserv_group_pct[group] = percent;
+	ret = ruby_update_group_uclamp(group);
+	mutex_unlock(&uclamp_mutex);
+	return ret == -ENOENT ? 0 : ret;
+}
+EXPORT_SYMBOL_GPL(ruby_perfserv_set_group_uclamp);
+
+int ruby_perfserv_set_group_boost(unsigned int group, int boost)
+{
+	int ret;
+
+	if (group >= ARRAY_SIZE(ruby_perfserv_group_boost) ||
+	    boost < -100 || boost > 100)
+		return -ERANGE;
+	static_branch_enable(&sched_uclamp_used);
+	mutex_lock(&uclamp_mutex);
+	ruby_perfserv_group_boost[group] = boost;
+	ret = ruby_update_group_uclamp(group);
+	mutex_unlock(&uclamp_mutex);
+	return ret == -ENOENT ? 0 : ret;
+}
+EXPORT_SYMBOL_GPL(ruby_perfserv_set_group_boost);
+
+int ruby_perfserv_set_group_prefer_idle(unsigned int group, bool enable)
+{
+	struct task_group *tg;
+	int ret = -ENOENT;
+
+	if (group >= ARRAY_SIZE(ruby_perfserv_group_pct))
+		return -ERANGE;
+	WRITE_ONCE(ruby_perfserv_group_prefer_idle[group], enable);
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(tg, &task_groups, list) {
+		if (ruby_perfserv_group_index(tg) != group)
+			continue;
+		WRITE_ONCE(tg->ruby_prefer_idle, enable);
+		ret = 0;
+		break;
+	}
+	rcu_read_unlock();
+	return ret == -ENOENT ? 0 : ret;
+}
+EXPORT_SYMBOL_GPL(ruby_perfserv_set_group_prefer_idle);
+#endif
+
+#ifdef CONFIG_MTK_RUBY_BIG_TASK_ROTATION
+int ruby_rotation_set_top_app_uclamp(bool enable)
+{
+	int ret;
+
+	static_branch_enable(&sched_uclamp_used);
+	mutex_lock(&uclamp_mutex);
+	ruby_rotation_top_app_boost = enable;
+	ret = ruby_update_top_app_uclamp();
+	mutex_unlock(&uclamp_mutex);
+	return ret;
+}
+#endif
+
+#ifdef CONFIG_MTK_FPSGO_V3
+int ruby_fpsgo_set_top_app_uclamp(unsigned int percent)
+{
+	int ret;
+
+	if (percent > 100)
+		return -ERANGE;
+
+	static_branch_enable(&sched_uclamp_used);
+	mutex_lock(&uclamp_mutex);
+	ruby_fpsgo_top_app_pct = percent;
+	ret = ruby_update_top_app_uclamp();
+	mutex_unlock(&uclamp_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ruby_fpsgo_set_top_app_uclamp);
+#endif
+
+#ifdef CONFIG_MTK_GBE
+int ruby_gbe_set_top_app_uclamp(unsigned int percent)
+{
+	int ret;
+
+	if (percent > 100)
+		return -ERANGE;
+
+	static_branch_enable(&sched_uclamp_used);
+	mutex_lock(&uclamp_mutex);
+	ruby_gbe_top_app_pct = percent;
+	ret = ruby_update_top_app_uclamp();
+	mutex_unlock(&uclamp_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(ruby_gbe_set_top_app_uclamp);
+#endif
+#endif
+
 static ssize_t cpu_uclamp_write(struct kernfs_open_file *of, char *buf,
 				size_t nbytes, loff_t off,
 				enum uclamp_id clamp_id)
 {
 	struct uclamp_request req;
 	struct task_group *tg;
+	u64 effective;
 
 	req = capacity_from_percent(buf);
 	if (req.ret)
@@ -10996,8 +11309,36 @@ static ssize_t cpu_uclamp_write(struct kernfs_open_file *of, char *buf,
 	rcu_read_lock();
 
 	tg = css_tg(of_css(of));
-	if (tg->uclamp_req[clamp_id].value != req.util)
-		uclamp_se_set(&tg->uclamp_req[clamp_id], req.util, false);
+	effective = req.util;
+#if defined(CONFIG_MTK_RUBY_BIG_TASK_ROTATION) || defined(CONFIG_MTK_FPSGO_V3) || \
+	defined(CONFIG_MTK_RUBY_SCHED_PREFER)
+	if (clamp_id == UCLAMP_MIN) {
+		int group = ruby_perfserv_group_index(tg);
+
+		if (group >= 0)
+			effective = max_t(u64, effective,
+				DIV_ROUND_CLOSEST_ULL(
+					(u64)ruby_perfserv_group_pct[group] <<
+					SCHED_CAPACITY_SHIFT, 100));
+		if (group >= 0 && ruby_perfserv_group_boost[group] > 0)
+			effective = max_t(u64, effective,
+				DIV_ROUND_CLOSEST_ULL(
+					(u64)ruby_perfserv_group_boost[group] <<
+					SCHED_CAPACITY_SHIFT, 100));
+		if (group == 3) {
+		effective = max_t(u64, effective,
+			DIV_ROUND_CLOSEST_ULL((u64)ruby_fpsgo_top_app_pct <<
+					SCHED_CAPACITY_SHIFT, 100));
+		effective = max_t(u64, effective,
+			DIV_ROUND_CLOSEST_ULL((u64)ruby_gbe_top_app_pct <<
+					SCHED_CAPACITY_SHIFT, 100));
+		if (ruby_rotation_top_app_boost)
+			effective = SCHED_CAPACITY_SCALE;
+		}
+	}
+#endif
+	if (tg->uclamp_req[clamp_id].value != effective)
+		uclamp_se_set(&tg->uclamp_req[clamp_id], effective, false);
 
 	/*
 	 * Because of not recoverable conversion rounding we keep track of the
