@@ -1541,7 +1541,7 @@ static int btmtk_cif_probe(struct platform_device *pdev)
 	cif_dev->pdev = pdev;
 	g_sbdev->chip_id = 0x6631;
 	if (bt_reg_init()) {
-		BTMTK_ERR("%s: Error allocating memory remap");
+		BTMTK_ERR("%s: Error allocating memory remap", __func__);
 		return -1;
 	}
 
