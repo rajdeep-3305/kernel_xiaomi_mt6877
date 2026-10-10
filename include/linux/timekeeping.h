@@ -190,6 +190,11 @@ static inline void ktime_get_boottime_ts64(struct timespec64 *ts)
 	*ts = ktime_to_timespec64(ktime_get_boottime());
 }
 
+static inline void get_monotonic_boottime(struct timespec64 *ts)
+{
+	*ts = ktime_to_timespec64(ktime_get_boottime());
+}
+
 static inline void ktime_get_coarse_boottime_ts64(struct timespec64 *ts)
 {
 	*ts = ktime_to_timespec64(ktime_get_coarse_boottime());
