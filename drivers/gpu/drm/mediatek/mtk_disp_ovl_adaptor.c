@@ -140,7 +140,7 @@ void mtk_ovl_adaptor_layer_config(struct device *dev, unsigned int idx,
 	rdma_config.addr0 = pending->addr;
 	rdma_config.pitch = pending->pitch;
 	rdma_config.fmt = pending->format;
-	rdma_config.color_encoding = pending->color_encoding;
+	rdma_config.color_encoding = state->base.color_encoding;
 	mtk_mdp_rdma_config(rdma_l, &rdma_config, cmdq_pkt);
 
 	if (use_dual_pipe) {
