@@ -17,6 +17,7 @@ config PINCTRL_MTK
 	select GENERIC_PINCONF
 	select GPIOLIB
 	select EINT_MTK
+	select OF_GPIO
 
 config PINCTRL_MTK_V2
 	tristate
@@ -35,6 +36,7 @@ config PINCTRL_MTK_MOORE
 	select GENERIC_PINMUX_FUNCTIONS
 	select GPIOLIB
 	select EINT_MTK
+	select OF_GPIO
 	select PINCTRL_MTK_V2
 
 config PINCTRL_MTK_PARIS
@@ -44,9 +46,11 @@ config PINCTRL_MTK_PARIS
 	select GENERIC_PINCONF
 	select GPIOLIB
 	select EINT_MTK
+	select OF_GPIO
 	select PINCTRL_MTK_V2
 
-# For MIPS SoCs
+# For ARMv7 SoCs
+
 config PINCTRL_MT7620
 	bool "MediaTek MT7620 pin control"
 	depends on SOC_MT7620 || COMPILE_TEST
@@ -264,3 +268,10 @@ config PINCTRL_MT6397
 	select PINCTRL_MTK
 
 endmenu
+
+config PINCTRL_MT6877
+	bool "Mediatek MT6877 pin control"
+	default n
+	depends on MACH_MT6877
+	select PINCTRL_MTK_PARIS
+
