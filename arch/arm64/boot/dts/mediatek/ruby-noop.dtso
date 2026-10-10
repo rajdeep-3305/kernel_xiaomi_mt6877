@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * No-op overlay for ruby DTBO partition.
+ * The combined DTB already merges all ruby customizations.
+ * This exists only because LK expects a DTBO image to be present.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	/* intentionally empty */
+};
