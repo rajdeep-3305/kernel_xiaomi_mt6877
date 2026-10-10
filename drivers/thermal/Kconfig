@@ -523,3 +523,12 @@ config LOONGSON2_THERMAL
 	  temperature threshold, the interrupt will occur.
 
 endif
+
+config RUBY_MI_THERMAL_CHG
+	bool "Ruby thermal charging interface"
+	depends on MACH_MT6877
+	default y
+	help
+	  Expose the Ruby product index used by Xiaomi's charging thermal
+	  policy through the thermal_message device.
+
