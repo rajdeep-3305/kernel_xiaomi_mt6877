@@ -39,3 +39,7 @@ obj-$(CONFIG_POWERNV_CPUIDLE)		+= cpuidle-powernv.o
 ###############################################################################
 # RISC-V drivers
 obj-$(CONFIG_RISCV_SBI_CPUIDLE)		+= cpuidle-riscv-sbi.o
+
+obj-$(CONFIG_ARM_MTK_81XX_CPUIDLE) += cpuidle-mt81xx_v2.o
+obj-$(CONFIG_ARM_MTK_CPUIDLE) += cpuidle-mtk_acao.o
+obj-$(CONFIG_ARM_MTK_NEW_ARCH_CPUIDLE) += cpuidle-mediatek.o
