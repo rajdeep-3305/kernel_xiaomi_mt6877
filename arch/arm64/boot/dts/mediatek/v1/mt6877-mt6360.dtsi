@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright (c) 2021 MediaTek Inc.
+ * Copyright (C) 2022 XiaoMi, Inc.
+ */
+
+#include <dt-bindings/regulator/mediatek,mt6360-regulator.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/phy/phy.h>
+
+&i2c5 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	mt6360_pmu: subpmic_mtk: mt6360@34 {
+		compatible = "mediatek,mt6360";
+		reg = <0x34>;
+		wakeup-source;
+		interrupt-parent = <&pio>;
+		interrupts = <4 IRQ_TYPE_LEVEL_LOW>;
+		interrupt-names = "IRQB";
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		status = "okay";
+
+		mt6360_chg: charger {
+			compatible = "mediatek,mt6360-chg";
+			richtek,vinovp-microvolt = <14500000>;
+			io-channels = <&mt6360_adc 0>, <&mt6360_adc 1>,
+				      <&mt6360_adc 3>, <&mt6360_adc 4>,
+				      <&mt6360_adc 5>, <&mt6360_adc 6>,
+				      <&mt6360_adc 8>, <&mt6360_adc 10>;
+			io-channel-names = "USBID", "VBUSDIV5", "VSYS", "VBAT",
+					   "IBUS", "IBAT", "TEMP_JC", "TS";
+			bootmode = <&chosen>;
+			ichg = <2000000>;
+			aicr = <500000>;
+			mivr = <4400000>;
+			cv = <4350000>;
+			ieoc = <150000>;
+			safety_timer = <12>;
+			ircmp_resistor = <25000>;
+			ircmp_vclamp = <32000>;
+			en_te = <1>;
+			en_wdt = <1>;
+			post_aicc = <1>;
+			batoc_notify = <0>;
+			bc12_sel = <0>;
+			phys = <&u2port0 PHY_TYPE_USB2>;
+			phy-names = "usb2-phy";
+
+			otg_vbus: usb-otg-vbus {
+				regulator-compatible = "usb-otg-vbus";
+				regulator-name = "usb-otg-vbus";
+				regulator-min-microvolt = <4425000>;
+				regulator-max-microvolt = <5825000>;
+				regulator-min-microamp = <500000>;
+				regulator-max-microamp = <3000000>;
+			};
+		};
+
+		mt6360_adc: adc {
+			compatible = "mediatek,mt6360-adc";
+			#io-channel-cells = <1>;
+		};
+
+		mt6360_led: led-controller {
+			compatible = "mediatek,mt6360-led";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			flash@4 {
+				reg = <4>;
+				function = LED_FUNCTION_FLASH;
+				color = <LED_COLOR_ID_WHITE>;
+				function-enumerator = <1>;
+				led-max-microamp = <400000>;
+				flash-max-microamp = <1200000>;
+				flash-max-timeout-us = <1248000>;
+			};
+
+			flash@5 {
+				reg = <5>;
+				function = LED_FUNCTION_FLASH;
+				color = <LED_COLOR_ID_WHITE>;
+				function-enumerator = <2>;
+				led-max-microamp = <400000>;
+				flash-max-microamp = <1200000>;
+				flash-max-timeout-us = <1248000>;
+			};
+		};
+
+		mt6360_regulator: mt6360_pmic: mt6360_ldo: regulator {
+			compatible = "mediatek,mt6360-regulator";
+			LDO_VIN3-supply = <&mt6360_buck2>;
+			pwr-off-seq = [06 04 00 02];
+			sdcard-det-en = <1>;
+			sdcard-hlact = <1>;
+
+			mt6360_mdla_buck_reg: buck1 {
+				regulator-name = "VMDLA";
+				regulator-min-microvolt = <300000>;
+				regulator-max-microvolt = <1300000>;
+				regulator-allowed-modes = <MT6360_OPMODE_NORMAL
+					MT6360_OPMODE_LP
+					MT6360_OPMODE_ULP>;
+				regulator-always-on;
+			};
+
+			mt6360_buck2: buck2 {
+				regulator-name = "VDRAM1";
+				regulator-min-microvolt = <300000>;
+				regulator-max-microvolt = <1300000>;
+				regulator-allowed-modes = <MT6360_OPMODE_NORMAL
+					MT6360_OPMODE_LP
+					MT6360_OPMODE_ULP>;
+				regulator-always-on;
+			};
+
+			ldo6 {
+				regulator-name = "VMDDR";
+				regulator-min-microvolt = <500000>;
+				regulator-max-microvolt = <2100000>;
+				regulator-allowed-modes = <MT6360_OPMODE_NORMAL
+					MT6360_OPMODE_LP>;
+				regulator-always-on;
+			};
+
+			ldo7 {
+				regulator-name = "VDRAM2";
+				regulator-min-microvolt = <500000>;
+				regulator-max-microvolt = <2100000>;
+				regulator-allowed-modes = <MT6360_OPMODE_NORMAL
+					MT6360_OPMODE_LP>;
+				regulator-always-on;
+			};
+
+			mt_pmic_vfp_ldo_reg: ldo1 {
+				regulator-name = "VFP";
+				regulator-min-microvolt = <1200000>;
+				regulator-max-microvolt = <3600000>;
+				regulator-allowed-modes = <MT6360_OPMODE_NORMAL
+					MT6360_OPMODE_LP>;
+			};
+
+			mt_pmic_vtp_ldo_reg: ldo2 {
+				regulator-name = "VTP";
+				regulator-min-microvolt = <1200000>;
+				regulator-max-microvolt = <3600000>;
+				regulator-allowed-modes = <MT6360_OPMODE_NORMAL
+					MT6360_OPMODE_LP>;
+			};
+
+			mt_pmic_vmc_ldo_reg: ldo3 {
+				regulator-name = "VMC";
+				regulator-min-microvolt = <1200000>;
+				regulator-max-microvolt = <3600000>;
+				regulator-allowed-modes = <MT6360_OPMODE_NORMAL
+					MT6360_OPMODE_LP>;
+			};
+
+			mt_pmic_vmch_ldo_reg: ldo5 {
+				regulator-name = "VMCH";
+				regulator-min-microvolt = <2700000>;
+				regulator-max-microvolt = <3600000>;
+				regulator-allowed-modes = <MT6360_OPMODE_NORMAL
+					MT6360_OPMODE_LP>;
+			};
+		};
+	};
+};
