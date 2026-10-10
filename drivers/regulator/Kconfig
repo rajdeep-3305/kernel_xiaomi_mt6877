@@ -807,8 +807,7 @@ config REGULATOR_MT6311
 
 config REGULATOR_MT6315
 	tristate "MediaTek MT6315 PMIC"
-	depends on SPMI
-	select REGMAP_SPMI
+	depends on MTK_MFD_SPMI_PMIC
 	help
 	  Say y here to select this option to enable the power regulator of
 	  MediaTek MT6315 PMIC.
@@ -853,7 +852,7 @@ config REGULATOR_MT6357
 
 config REGULATOR_MT6358
 	tristate "MediaTek MT6358 PMIC"
-	depends on MFD_MT6397
+	depends on MFD_MT6358
 	help
 	  Say y here to select this option to enable the power regulator of
 	  MediaTek MT6358 PMIC.
@@ -862,7 +861,7 @@ config REGULATOR_MT6358
 
 config REGULATOR_MT6359
 	tristate "MediaTek MT6359 PMIC"
-	depends on MFD_MT6397
+	depends on MFD_MT6397 || MFD_MT6358
 	help
 	  Say y here to select this option to enable the power regulator of
 	  MediaTek MT6359 PMIC.
@@ -872,10 +871,11 @@ config REGULATOR_MT6359
 config REGULATOR_MT6360
 	tristate "MT6360 SubPMIC Regulator"
 	depends on MFD_MT6360
+	select CRC8
 	help
 	  Say Y here to enable MT6360 regulator support.
 	  This is support MT6360 PMIC/LDO part include
-	  2-channel buck with Thermal Shutdown and Overload Protection
+	  2-channel buck with Thermal Shutdown and Overlord Protection
 	  6-channel High PSRR and Low Dropout LDO.
 
 config REGULATOR_MT6370
@@ -1664,3 +1664,57 @@ config REGULATOR_QCOM_LABIBB
 	  for LCD display panel.
 
 endif
+
+config REGULATOR_FAN53870
+        bool "ON Semi Technologies Inc. FAN53870 regulator driver"
+        depends on I2C_MTK
+	select REGMAP_I2C
+        help
+          Say Y here to support the FAN53870 PMIC chip.
+          This driver controls FAN53870 PMIC chip and the voltage
+          regulators found in ON Semi Technologies Inc. FAN53870
+          PMIC.
+
+config REGULATOR_WL2868C
+        bool "ON Semi Technologies Inc. WL2868C regulator driver"
+        depends on I2C_MTK
+	select REGMAP_I2C
+        help
+          Say Y here to support the WL2868C PMIC chip.
+          This driver controls WL2868C PMIC chip and the voltage
+          regulators found in ON Semi Technologies Inc. WL2868C
+          PMIC.
+
+config REGULATOR_MT6359P
+	tristate "MediaTek MT6359P PMIC"
+	depends on MFD_MT6358
+	help
+	  Say y here to select this option to enable the power regulator of
+	  MediaTek MT6359P PMIC.
+	  This driver supports the control of different power rails of device
+	  through regulator interface.
+
+config REGULATOR_MT6362
+	tristate "MT6362 SPMI Regulator driver"
+	depends on MFD_MT6362
+	help
+	  Say yes here to have support for the MT6362 Regulator
+	  Include six BUCKs and seven LDOs.
+
+	  The driver can also be build as a module.
+	  If so, the module will be called mt6362_regulator
+
+config REGULATOR_RT5133
+	tristate "Richtek RT5133 regulator driver"
+	depends on I2C && GPIOLIB
+	select REGMAP
+	select CRC8
+	select OF_GPIO
+	select REGULATOR_FIXED_VOLTAGE
+	help
+	  RT5133 is an integrated chip. It includes 8 LDOs and 3 GPIOs that
+	  can be used to drive output high/low purpose. The dependency of the
+	  GPIO block is internally LDO1 voltage. If LDO1 voltage output disabled,
+	  GPIO cannot be used to drive output high. It need to pay more
+	  attention on the usage.
+

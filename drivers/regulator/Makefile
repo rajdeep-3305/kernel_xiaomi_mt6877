@@ -97,7 +97,7 @@ obj-$(CONFIG_REGULATOR_MP8859) += mp8859.o
 obj-$(CONFIG_REGULATOR_MP886X) += mp886x.o
 obj-$(CONFIG_REGULATOR_MPQ7920) += mpq7920.o
 obj-$(CONFIG_REGULATOR_MT6311) += mt6311-regulator.o
-obj-$(CONFIG_REGULATOR_MT6315) += mt6315-regulator.o
+obj-$(CONFIG_REGULATOR_MT6315) += mt6315-regulator.o mt6315-misc.o
 obj-$(CONFIG_REGULATOR_MT6323)	+= mt6323-regulator.o
 obj-$(CONFIG_REGULATOR_MT6331)	+= mt6331-regulator.o
 obj-$(CONFIG_REGULATOR_MT6332)	+= mt6332-regulator.o
@@ -197,3 +197,11 @@ obj-$(CONFIG_REGULATOR_WM8400) += wm8400-regulator.o
 obj-$(CONFIG_REGULATOR_WM8994) += wm8994-regulator.o
 
 ccflags-$(CONFIG_REGULATOR_DEBUG) += -DDEBUG
+
+obj-$(CONFIG_REGULATOR_PROXY_CONSUMER) += proxy-consumer.o
+obj-$(CONFIG_REGULATOR_FAN53870) += fan53870.o
+obj-$(CONFIG_REGULATOR_WL2868C) += wl2868c.o
+obj-$(CONFIG_REGULATOR_MT6359P) += mt6359p-regulator.o
+obj-$(CONFIG_REGULATOR_MT6362) += mt6362-regulator.o
+obj-$(CONFIG_REGULATOR_RT5133) += rt5133-regulator.o
+ccflags-$(CONFIG_REGULATOR_RT5133) += -I$(srctree)/drivers/misc/mediatek/include
