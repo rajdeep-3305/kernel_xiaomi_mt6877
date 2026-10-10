@@ -27,7 +27,9 @@
 #include <linux/serial.h>
 #include <linux/serial_8250.h>
 #include <linux/nmi.h>
+#include <linux/mtk_printk_ctrl.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/pm_runtime.h>
@@ -3430,6 +3432,13 @@ void serial8250_console_write(struct uart_8250_port *up, const char *s,
 	unsigned long flags;
 	unsigned int ier, use_fifo;
 	int locked = 1;
+
+#if IS_ENABLED(CONFIG_MACH_MT6877) && IS_ENABLED(CONFIG_PRINTK_MTK_UART_CONSOLE)
+	/* Honor the vendor UART switch before polling with interrupts disabled. */
+	if (!mt_get_uartlog_status() && port->dev &&
+	    of_device_is_compatible(port->dev->of_node, "mediatek,mt6877-uart"))
+		return;
+#endif
 
 	touch_nmi_watchdog();
 
