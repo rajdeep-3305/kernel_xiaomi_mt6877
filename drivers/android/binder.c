@@ -76,6 +76,9 @@
 #include "binder_internal.h"
 #include "binder_trace.h"
 #include <trace/hooks/binder.h>
+#ifdef CONFIG_MTK_TASK_TURBO
+#include "../misc/mediatek/include/mt-plat/turbo_common.h"
+#endif
 
 static HLIST_HEAD(binder_deferred_list);
 static DEFINE_MUTEX(binder_deferred_lock);
@@ -1834,6 +1837,36 @@ static void binder_txn_latency_free(struct binder_transaction *t)
 	trace_binder_txn_latency_free(t, from_proc, from_thread, to_proc, to_thread);
 }
 
+#ifdef CONFIG_MTK_TASK_TURBO
+static void binder_start_transaction_turbo(struct binder_transaction *t,
+					   struct task_struct *from,
+					   struct task_struct *to)
+{
+	if (t->inherit_task || !binder_start_turbo_inherit(from, to))
+		return;
+
+	get_task_struct(to);
+	WRITE_ONCE(t->inherit_task, to);
+}
+
+static void binder_release_transaction_turbo(struct binder_transaction *t,
+					     bool stop)
+{
+	struct task_struct *task = xchg(&t->inherit_task, NULL);
+
+	if (!task)
+		return;
+	if (stop)
+		binder_stop_turbo_inherit(task);
+	put_task_struct(task);
+}
+#else
+static inline void binder_release_transaction_turbo(
+		struct binder_transaction *t, bool stop)
+{
+}
+#endif
+
 static void binder_free_transaction(struct binder_transaction *t)
 {
 	struct binder_thread *target_thread;
@@ -1875,6 +1908,7 @@ static void binder_free_transaction(struct binder_transaction *t)
 	 * t->buffer->transaction has already been cleared.
 	 */
 	binder_free_txn_fixups(t);
+	binder_release_transaction_turbo(t, true);
 	kfree(t);
 	binder_stats_deleted(BINDER_STAT_TRANSACTION);
 }
@@ -3082,6 +3116,10 @@ static int binder_proc_transaction(struct binder_transaction *t,
 	if (thread) {
 		binder_transaction_priority(thread, t, node);
 		binder_enqueue_thread_work_ilocked(thread, &t->work);
+#ifdef CONFIG_MTK_TASK_TURBO
+		binder_start_transaction_turbo(t,
+			t->from ? t->from->task : NULL, thread->task);
+#endif
 	} else if (!pending_async) {
 		trace_android_vh_binder_special_task(t, proc, thread,
 			&t->work, &proc->todo, !oneway, &enqueue_task);
@@ -3930,6 +3968,9 @@ static void binder_transaction(struct binder_proc *proc,
 			spin_unlock(&thread->prio_lock);
 		}
 		wake_up_interruptible_sync(&target_thread->wait);
+#ifdef CONFIG_MTK_TASK_TURBO
+		binder_release_transaction_turbo(in_reply_to, true);
+#endif
 		trace_android_vh_binder_restore_priority(in_reply_to, current);
 		binder_restore_priority(thread, &in_reply_to->saved_priority);
 		binder_free_transaction(in_reply_to);
@@ -4063,6 +4104,9 @@ err_invalid_target_handle:
 
 	BUG_ON(thread->return_error.cmd != BR_OK);
 	if (in_reply_to) {
+#ifdef CONFIG_MTK_TASK_TURBO
+		binder_release_transaction_turbo(in_reply_to, true);
+#endif
 		trace_android_vh_binder_restore_priority(in_reply_to, current);
 		binder_restore_priority(thread, &in_reply_to->saved_priority);
 		binder_set_txn_from_error(in_reply_to, t_debug_id,
@@ -4933,6 +4977,10 @@ retry:
 						 binder_stop_on_user_error < 2);
 		}
 		trace_android_vh_binder_restore_priority(NULL, current);
+#ifdef CONFIG_MTK_TASK_TURBO
+		/* A one-way transaction has no reply path to drop inheritance. */
+		binder_stop_turbo_inherit(current);
+#endif
 		binder_restore_priority(thread, &proc->default_priority);
 	}
 
@@ -5233,6 +5281,10 @@ skip:
 				task_tgid_nr_ns(sender,
 						task_active_pid_ns(current));
 			trace_android_vh_sync_txn_recvd(thread->task, t_from->task);
+#ifdef CONFIG_MTK_TASK_TURBO
+			binder_start_transaction_turbo(t, t_from->task,
+						       thread->task);
+#endif
 		} else {
 			trd->sender_pid = 0;
 		}
@@ -5323,6 +5375,10 @@ skip:
 			thread->transaction_stack = t;
 			binder_inner_proc_unlock(thread->proc);
 		} else {
+			/* Async work has no transaction object after delivery. The
+			 * target thread owns the boost until it returns for more work.
+			 */
+			binder_release_transaction_turbo(t, false);
 			binder_free_transaction(t);
 		}
 		break;

@@ -608,6 +608,9 @@ struct binder_transaction {
 	struct binder_priority saved_priority;
 	bool set_priority_called;
 	bool is_nested;
+#ifdef CONFIG_MTK_TASK_TURBO
+	struct task_struct *inherit_task;
+#endif
 	kuid_t  sender_euid;
 	ktime_t start_time;
 	struct list_head fd_fixups;
