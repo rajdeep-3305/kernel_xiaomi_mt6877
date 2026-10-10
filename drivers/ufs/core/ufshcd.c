@@ -30,6 +30,7 @@
 #include "ufshcd-priv.h"
 #include <ufs/ufs_quirks.h>
 #include <ufs/unipro.h>
+#include <ufs/ufshpb.h>
 #include "ufs-sysfs.h"
 #include "ufs-debugfs.h"
 #include "ufs-fault-injection.h"
@@ -299,6 +300,34 @@ static const struct ufs_dev_quirk ufs_fixups[] = {
 	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX,
 	  .model = "hB8aL1" /*H28U62301AMR*/,
 	  .quirk = UFS_DEVICE_QUIRK_HOST_VS_DEBUGSAVECONFIGTIME },
+#ifdef CONFIG_SCSI_SKHPB
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H28S",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ15ACPMA",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ15AECMA",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ15AECMM",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ15AFAMA",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ15AFAMM",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ15AJAMM",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ21AECMM",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ21AECMZ",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ21AFAMM",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ21AFAMZ",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ21AJAMM",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+	{ .wmanufacturerid = UFS_VENDOR_SKHYNIX, .model = "H9HQ21AHDMM",
+	  .quirk = SKHPB_QUIRK_PURGE_HINT_INFO_WHEN_SLEEP },
+#endif
 	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
 	  .model = UFS_ANY_MODEL,
 	  .quirk = UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM },
@@ -311,6 +340,24 @@ static const struct ufs_dev_quirk ufs_fixups[] = {
 	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
 	  .model = "THGJFJT1E45BATP",
 	  .quirk = UFS_DEVICE_QUIRK_NO_TIMESTAMP_SUPPORT },
+	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
+	  .model = "THGJFCT0T44BAKLA",
+	  .quirk = UFS_DEVICE_QUIRK_WRITE_BOOSETER_FLUSH },
+	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
+	  .model = "THGJFCT1T84BAKCA",
+	  .quirk = UFS_DEVICE_QUIRK_WRITE_BOOSETER_FLUSH },
+	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
+	  .model = "THGJFCT2T84BAKCA",
+	  .quirk = UFS_DEVICE_QUIRK_WRITE_BOOSETER_FLUSH },
+	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
+	  .model = "THGJFCT0T44BAKLB",
+	  .quirk = UFS_DEVICE_QUIRK_WRITE_BOOSETER_FLUSH },
+	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
+	  .model = "THGJFCT1T84BAKCB",
+	  .quirk = UFS_DEVICE_QUIRK_WRITE_BOOSETER_FLUSH },
+	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
+	  .model = "THGJFCT2T84BAKCB",
+	  .quirk = UFS_DEVICE_QUIRK_WRITE_BOOSETER_FLUSH },
 	{}
 };
 
@@ -2970,6 +3017,14 @@ static int ufshcd_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 	}
 
 	lrbp->req_abort_skip = false;
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX) {
+		if (hba->skhpb_state == SKHPB_PRESENT && !hba->issue_ioctl)
+			skhpb_prep_fn(hba, lrbp);
+	} else
+#endif
+		ufshpb_prep(hba, lrbp);
+	ufstw_prep(hba, lrbp);
 
 	ufshcd_comp_scsi_upiu(hba, lrbp);
 
@@ -5224,6 +5279,20 @@ static int ufshcd_slave_configure(struct scsi_device *sdev)
 	struct ufs_hba *hba = shost_priv(sdev->host);
 	struct request_queue *q = sdev->request_queue;
 
+#ifdef CONFIG_SCSI_SKHPB
+	if (sdev->lun < SKHPB_MAX_GENERAL_LUN)
+		hba->sdev_ufs_lu[sdev->lun] = sdev;
+#endif
+
+#ifdef CONFIG_SCSI_UFS_HPB
+	/* HPB needs the LU descriptor before it can allocate its map. */
+	if (sdev->lun < UFS_UPIU_MAX_UNIT_NUM_ID &&
+	    hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX &&
+	    hba->dev_info.hpb_enabled && ufshpb_is_allowed(hba))
+		ufshpb_init_hpb_lu(hba, sdev);
+#endif
+	ufstw_init_lu(hba, sdev);
+
 	blk_queue_update_dma_pad(q, PRDT_DATA_BYTE_COUNT_PAD - 1);
 
 	/*
@@ -5259,6 +5328,18 @@ static void ufshcd_slave_destroy(struct scsi_device *sdev)
 	unsigned long flags;
 
 	hba = shost_priv(sdev->host);
+#ifdef CONFIG_SCSI_UFS_HPB
+	if (sdev->lun < UFS_UPIU_MAX_UNIT_NUM_ID &&
+	    hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX &&
+	    hba->dev_info.hpb_enabled && ufshpb_is_allowed(hba))
+		ufshpb_destroy_lu(hba, sdev);
+#endif
+
+#ifdef CONFIG_SCSI_SKHPB
+	if (sdev->lun < SKHPB_MAX_GENERAL_LUN)
+		hba->sdev_ufs_lu[sdev->lun] = NULL;
+#endif
+	ufstw_destroy_lu(hba, sdev);
 
 	/* Drop the reference as it won't be needed anymore */
 	if (ufshcd_scsi_to_upiu_lun(sdev->lun) == UFS_UPIU_UFS_DEVICE_WLUN) {
@@ -5368,6 +5449,15 @@ ufshcd_transfer_rsp_status(struct ufs_hba *hba, struct ufshcd_lrb *lrbp,
 			 */
 			scsi_status = lrbp->ucd_rsp_ptr->header.status;
 			result = ufshcd_scsi_cmd_status(lrbp, scsi_status);
+			if (scsi_status == SAM_STAT_GOOD) {
+#ifdef CONFIG_SCSI_SKHPB
+				if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX) {
+					if (hba->skhpb_state == SKHPB_PRESENT)
+						skhpb_rsp_upiu(hba, lrbp);
+				} else
+#endif
+					ufshpb_rsp_upiu(hba, lrbp);
+			}
 
 			/*
 			 * Currently we are only supporting BKOPs exception
@@ -6227,6 +6317,9 @@ static void ufshcd_exception_event_handler(struct work_struct *work)
 
 	if (status & hba->ee_drv_mask & MASK_EE_URGENT_TEMP)
 		ufshcd_temp_exception_event_handler(hba, status);
+
+	if (status & hba->ee_drv_mask & MASK_EE_WRITEBOOSTER_EVENT)
+		ufstw_exception_event(hba);
 
 	ufs_debugfs_exception_event(hba, status);
 out:
@@ -7548,6 +7641,14 @@ out:
 	hba->req_abort_count = 0;
 	ufshcd_update_evt_hist(hba, UFS_EVT_DEV_RESET, (u32)err);
 	if (!err) {
+#ifdef CONFIG_SCSI_SKHPB
+		if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX &&
+		    hba->skhpb_state == SKHPB_PRESENT) {
+			hba->skhpb_state = SKHPB_RESET;
+			schedule_delayed_work(&hba->skhpb_init_work,
+					      msecs_to_jiffies(10));
+		}
+#endif
 		err = SUCCESS;
 	} else {
 		dev_err(hba->dev, "%s: failed with err %d\n", __func__, err);
@@ -7803,6 +7904,18 @@ static int ufshcd_host_reset_and_restore(struct ufs_hba *hba)
 	 * Stop the host controller and complete the requests
 	 * cleared by h/w
 	 */
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX)
+#endif
+		ufshpb_reset_host(hba);
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX &&
+	    hba->skhpb_state == SKHPB_PRESENT) {
+		hba->skhpb_state = SKHPB_RESET;
+		schedule_delayed_work(&hba->skhpb_init_work,
+				      msecs_to_jiffies(10));
+	}
+#endif
 	ufshcd_hba_stop(hba);
 	hba->silence_err_logs = true;
 	ufshcd_complete_requests(hba, true);
@@ -8313,6 +8426,7 @@ static int ufs_get_device_desc(struct ufs_hba *hba)
 {
 	int err;
 	u8 model_index;
+	u8 b_ufs_feature_sup;
 	u8 *desc_buf;
 	struct ufs_dev_info *dev_info = &hba->dev_info;
 
@@ -8341,10 +8455,27 @@ static int ufs_get_device_desc(struct ufs_hba *hba)
 	dev_info->wspecversion = desc_buf[DEVICE_DESC_PARAM_SPEC_VER] << 8 |
 				      desc_buf[DEVICE_DESC_PARAM_SPEC_VER + 1];
 	dev_info->bqueuedepth = desc_buf[DEVICE_DESC_PARAM_Q_DPTH];
+	b_ufs_feature_sup = desc_buf[DEVICE_DESC_PARAM_UFS_FEAT];
+	ufstw_get_dev_info(hba, desc_buf);
 
 	to_hba_priv(hba)->rtt_cap = desc_buf[DEVICE_DESC_PARAM_RTT_CAP];
 
 	model_index = desc_buf[DEVICE_DESC_PARAM_PRDCT_NAME];
+
+#ifdef CONFIG_SCSI_UFS_HPB
+	if (dev_info->wspecversion >= UFS_DEV_HPB_SUPPORT_VERSION &&
+	    (b_ufs_feature_sup & UFS_DEV_HPB_SUPPORT)) {
+		bool hpb_en = false;
+
+		ufshpb_get_dev_info(hba, desc_buf);
+		if (!ufshpb_is_legacy(hba))
+			err = ufshcd_query_flag_retry(hba,
+					UPIU_QUERY_OPCODE_READ_FLAG,
+					QUERY_FLAG_IDN_HPB_EN, 0, &hpb_en);
+		if (ufshpb_is_legacy(hba) || (!err && hpb_en))
+			dev_info->hpb_enabled = true;
+	}
+#endif
 
 	err = ufshcd_read_string_desc(hba, model_index,
 				      &dev_info->model, SD_ASCII_STD);
@@ -8608,6 +8739,12 @@ static int ufshcd_device_geo_params_init(struct ufs_hba *hba)
 	else if (desc_buf[GEOMETRY_DESC_PARAM_MAX_NUM_LUN] == 0)
 		hba->dev_info.max_lu_supported = 8;
 
+#ifdef CONFIG_SCSI_UFS_HPB
+	if (QUERY_DESC_MAX_SIZE >= GEOMETRY_DESC_PARAM_HPB_MAX_ACTIVE_REGS)
+		ufshpb_get_geo_info(hba, desc_buf);
+#endif
+	ufstw_get_geo_info(hba, desc_buf);
+
 out:
 	kfree(desc_buf);
 	return err;
@@ -8788,7 +8925,18 @@ static int ufshcd_add_lus(struct ufs_hba *hba)
 	}
 
 	ufs_bsg_probe(hba);
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX)
+#endif
+		ufshpb_init(hba);
+	ufstw_init(hba);
+#ifdef CONFIG_SCSI_SKHPB
+	ufshcd_init_hpb(hba);
+#endif
 	scsi_scan_host(hba->host);
+#ifdef CONFIG_SCSI_SKHPB
+	schedule_delayed_work(&hba->skhpb_init_work, 0);
+#endif
 
 out:
 	return ret;
@@ -9023,6 +9171,11 @@ static int ufshcd_probe_hba(struct ufs_hba *hba, bool init_dev_params)
 		ufshcd_write_ee_control(hba);
 	/* Enable Auto-Hibernate if configured */
 	ufshcd_auto_hibern8_enable(hba);
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX)
+#endif
+		ufshpb_reset(hba);
+	ufstw_reset(hba);
 
 	trace_android_rvh_ufs_complete_init(hba);
 out:
@@ -9091,6 +9244,10 @@ static enum scsi_timeout_action ufshcd_eh_timed_out(struct scsi_cmnd *scmd)
 static const struct attribute_group *ufshcd_driver_groups[] = {
 	&ufs_sysfs_unit_descriptor_group,
 	&ufs_sysfs_lun_attributes_group,
+#ifdef CONFIG_SCSI_UFS_HPB
+	&ufs_sysfs_hpb_stat_group,
+	&ufs_sysfs_hpb_param_group,
+#endif
 	NULL,
 };
 
@@ -9104,6 +9261,17 @@ static struct ufs_hba_variant_params ufs_hba_vps = {
 	.ondemand_data.downdifferential	= 5,
 };
 
+static int ufshcd_ioctl(struct scsi_device *sdev, unsigned int cmd,
+			void __user *buffer)
+{
+	struct ufs_hba *hba = shost_priv(sdev->host);
+
+	if (!hba->vops || !hba->vops->ioctl)
+		return -EINVAL;
+
+	return hba->vops->ioctl(hba, cmd, buffer);
+}
+
 static const struct scsi_host_template ufshcd_driver_template = {
 	.module			= THIS_MODULE,
 	.name			= UFSHCD,
@@ -9114,6 +9282,10 @@ static const struct scsi_host_template ufshcd_driver_template = {
 	.slave_alloc		= ufshcd_slave_alloc,
 	.slave_configure	= ufshcd_slave_configure,
 	.slave_destroy		= ufshcd_slave_destroy,
+	.ioctl			= ufshcd_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl		= ufshcd_ioctl,
+#endif
 	.change_queue_depth	= ufshcd_change_queue_depth,
 	.eh_abort_handler	= ufshcd_abort,
 	.eh_device_reset_handler = ufshcd_eh_device_reset_handler,
@@ -9765,6 +9937,15 @@ static int __ufshcd_wl_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 	enum uic_link_state req_link_state;
 
 	hba->pm_op_in_progress = true;
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX)
+#endif
+		ufshpb_suspend(hba);
+	ufstw_suspend(hba);
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX)
+		skhpb_suspend(hba);
+#endif
 	if (pm_op != UFS_SHUTDOWN_PM) {
 		pm_lvl = pm_op == UFS_RUNTIME_PM ?
 			 hba->rpm_lvl : hba->spm_lvl;
@@ -9837,7 +10018,11 @@ static int __ufshcd_wl_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 			(((req_link_state == UIC_LINK_HIBERN8_STATE) ||
 			((req_link_state == UIC_LINK_ACTIVE_STATE) &&
 			ufshcd_is_auto_hibern8_enabled(hba))) &&
-			ufshcd_wb_need_flush(hba));
+				ufshcd_wb_need_flush(hba));
+		if (ufstw_need_flush(hba)) {
+			ret = -EAGAIN;
+			goto enable_scaling;
+		}
 	}
 
 	flush_work(&hba->eeh_work);
@@ -9934,6 +10119,15 @@ out:
 		ufshcd_update_evt_hist(hba, UFS_EVT_WL_SUSP_ERR, (u32)ret);
 		hba->clk_gating.is_suspended = false;
 		ufshcd_release(hba);
+#ifdef CONFIG_SCSI_SKHPB
+		if (hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX)
+#endif
+			ufshpb_resume(hba);
+		ufstw_resume(hba);
+#ifdef CONFIG_SCSI_SKHPB
+		if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX)
+			skhpb_resume(hba);
+#endif
 	}
 	hba->pm_op_in_progress = false;
 	return ret;
@@ -10021,6 +10215,15 @@ static int __ufshcd_wl_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 
 	/* Enable Auto-Hibernate if configured */
 	ufshcd_auto_hibern8_enable(hba);
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX)
+#endif
+		ufshpb_resume(hba);
+	ufstw_resume(hba);
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid == UFS_VENDOR_SKHYNIX)
+		skhpb_resume(hba);
+#endif
 
 	goto out;
 
@@ -10370,12 +10573,29 @@ void ufshcd_remove(struct ufs_hba *hba)
 		ufshcd_rpm_get_sync(hba);
 	ufs_hwmon_remove(hba);
 	ufs_bsg_remove(hba);
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->skhpb_initialized) {
+		cancel_delayed_work_sync(&hba->skhpb_init_work);
+		cancel_work_sync(&hba->skhpb_eh_work);
+		skhpb_quiesce(hba);
+	}
+#endif
 	ufs_sysfs_remove_nodes(hba->dev);
 	blk_mq_destroy_queue(hba->tmf_queue);
 	blk_put_queue(hba->tmf_queue);
 	blk_mq_free_tag_set(&hba->tmf_tag_set);
 	if (hba->scsi_host_added)
 		scsi_remove_host(hba->host);
+	/* slave_destroy() releases HPB/Turbo Write per-LU state first. */
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->skhpb_initialized)
+		skhpb_release(hba, SKHPB_NOT_SUPPORTED);
+#endif
+#ifdef CONFIG_SCSI_SKHPB
+	if (hba->dev_info.wmanufacturerid != UFS_VENDOR_SKHYNIX)
+#endif
+		ufshpb_remove(hba);
+	ufstw_remove(hba);
 	/* disable interrupts */
 	ufshcd_disable_intr(hba, hba->intr_mask);
 	ufshcd_hba_stop(hba);
