@@ -681,3 +681,11 @@ config SUNPLUS_SP7021_INTC
 	  the primary controller on C-Chip.
 
 endmenu
+
+config MTK_GIC_TARGET_ALL
+	bool
+	help
+	  Support MediaTek's GICv3 1-of-N SPI routing policy. Multi-CPU
+	  affinity masks are programmed with interrupt routing mode enabled
+	  instead of being reduced to a single target CPU.
+
