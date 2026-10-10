@@ -960,11 +960,11 @@ static void __init gic_dist_init(void)
 	writel_relaxed(val, base + GICD_CTLR);
 	gic_dist_wait_for_rwp();
 
-	/*
-	 * Set all global interrupts to the boot CPU only. ARE must be
-	 * enabled.
-	 */
-	affinity = gic_cpu_to_affinity(smp_processor_id());
+	if (IS_ENABLED(CONFIG_MTK_GIC_TARGET_ALL))
+		affinity = GICD_IROUTER_SPI_MODE_ANY;
+	else
+		affinity = gic_cpu_to_affinity(smp_processor_id());
+
 	for (i = 32; i < GIC_LINE_NR; i++)
 		gic_write_irouter(affinity, base + GICD_IROUTER + i * 8);
 
@@ -1412,6 +1412,7 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 	void __iomem *reg;
 	int enabled;
 	u64 val;
+	bool target_all;
 
 	if (force)
 		cpu = cpumask_first(mask_val);
@@ -1431,7 +1432,12 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 
 	offset = convert_offset_index(d, GICD_IROUTER, &index);
 	reg = gic_dist_base(d) + offset + (index * 8);
-	val = gic_cpu_to_affinity(cpu);
+	target_all = IS_ENABLED(CONFIG_MTK_GIC_TARGET_ALL) &&
+		     cpumask_weight(mask_val) > 1;
+	if (target_all)
+		val = GICD_IROUTER_SPI_MODE_ANY;
+	else
+		val = gic_cpu_to_affinity(cpu);
 
 	trace_android_rvh_gic_v3_set_affinity(d, mask_val, &val, force, gic_dist_base(d),
 					gic_data.redist_regions[0].redist_base,
@@ -1445,7 +1451,10 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 	if (enabled)
 		gic_unmask_irq(d);
 
-	irq_data_update_effective_affinity(d, cpumask_of(cpu));
+	if (target_all)
+		irq_data_update_effective_affinity(d, mask_val);
+	else
+		irq_data_update_effective_affinity(d, cpumask_of(cpu));
 
 	return IRQ_SET_MASK_OK_DONE;
 }
