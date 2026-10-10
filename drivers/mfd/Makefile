@@ -174,7 +174,7 @@ obj-$(CONFIG_MFD_MP2629)	+= mp2629.o
 
 obj-$(CONFIG_MFD_MT6360)	+= mt6360-core.o
 obj-$(CONFIG_MFD_MT6370)	+= mt6370.o
-mt6397-objs			:= mt6397-core.o mt6397-irq.o mt6358-irq.o
+mt6397-objs			:= mt6397-core.o mt6397-irq.o mt6358-irq.o mt6358-ipi.o
 obj-$(CONFIG_MFD_MT6397)	+= mt6397.o
 
 pcf50633-objs			:= pcf50633-core.o pcf50633-irq.o
@@ -282,3 +282,16 @@ obj-$(CONFIG_MFD_ATC260X_I2C)	+= atc260x-i2c.o
 
 obj-$(CONFIG_MFD_RSMU_I2C)	+= rsmu_i2c.o rsmu_core.o
 obj-$(CONFIG_MFD_RSMU_SPI)	+= rsmu_spi.o rsmu_core.o
+
+subdir-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include
+subdir-ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat/$(MTK_PLATFORM)/include
+subdir-ccflags-$(CONFIG_MTK_TINYSYS_SSPM_SUPPORT) += -I$(srctree)/drivers/misc/mediatek/sspm/
+obj-$(CONFIG_MFD_MT6397) += mt63xx-oc-debug.o
+ifeq ($(CONFIG_DEBUG_FS),y)
+obj-$(CONFIG_MFD_MT6397) += mt63xx-debug.o
+endif
+obj-$(CONFIG_MTK_MFD_SPMI_PMIC) += mtk-spmi-pmic.o
+obj-$(CONFIG_MFD_MT6358) += mt6358-core.o mt635x-ot-debug.o
+obj-$(CONFIG_MFD_MT6362) += mt6362-core.o
+obj-$(CONFIG_MT6358_MISC) += mt6358-misc.o
+obj-$(CONFIG_MT6397_MISC) += mt6397-misc.o
