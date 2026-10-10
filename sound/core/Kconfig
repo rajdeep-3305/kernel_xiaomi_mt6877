@@ -248,3 +248,9 @@ config SND_CTL_LED
 	select LEDS_TRIGGER_AUDIO if SND_CTL_LED
 
 source "sound/core/seq/Kconfig"
+
+config SND_JACK_INPUT_DEV_RUBY
+	bool "Ruby USB-C analog headset support"
+	depends on SND_JACK && TCPC_CLASS
+	default n
+
