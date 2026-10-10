@@ -12,7 +12,9 @@
 #include <linux/regmap.h>
 
 #include <linux/iio/buffer.h>
+#include <linux/iio/driver.h>
 #include <linux/iio/iio.h>
+#include <linux/iio/machine.h>
 #include <linux/iio/trigger_consumer.h>
 #include <linux/iio/triggered_buffer.h>
 
@@ -256,6 +258,72 @@ static const struct iio_chan_spec mt6360_adc_channels[] = {
 	IIO_CHAN_SOFT_TIMESTAMP(MT6360_CHAN_MAX),
 };
 
+struct mt6360_adc_map_desc {
+	const char *provider_channel;
+	const char *consumer_channel;
+};
+
+static const struct mt6360_adc_map_desc mt6360_charger_map_descs[] = {
+	{ "USBID", "USBID" },
+	{ "VBUSDIV5", "VBUSDIV5" },
+	{ "VSYS", "VSYS" },
+	{ "VBAT", "VBAT" },
+	{ "IBUS", "IBUS" },
+	{ "IBAT", "IBAT" },
+	{ "TEMP_JC", "TEMP_JC" },
+	{ "TS", "TS" },
+};
+
+static int mt6360_adc_match_platform_name(struct device *dev, void *data)
+{
+	if (dev->bus != &platform_bus_type)
+		return 0;
+
+	return !strcmp(to_platform_device(dev)->name, data);
+}
+
+static int mt6360_adc_register_charger_maps(struct platform_device *pdev,
+					    struct iio_dev *indio_dev)
+{
+	struct device *consumer;
+	struct iio_map *maps;
+	const char *consumer_name;
+	int i, ret;
+
+	consumer = device_find_child(pdev->dev.parent, "mt6360-chg",
+				     mt6360_adc_match_platform_name);
+	if (!consumer)
+		consumer = device_find_child(pdev->dev.parent, "mt6360_pmu_chg",
+					     mt6360_adc_match_platform_name);
+	if (!consumer)
+		return 0;
+
+	consumer_name = devm_kstrdup(&pdev->dev, dev_name(consumer), GFP_KERNEL);
+	put_device(consumer);
+	if (!consumer_name)
+		return -ENOMEM;
+
+	maps = devm_kcalloc(&pdev->dev, ARRAY_SIZE(mt6360_charger_map_descs) + 1,
+			    sizeof(*maps), GFP_KERNEL);
+	if (!maps)
+		return -ENOMEM;
+
+	for (i = 0; i < ARRAY_SIZE(mt6360_charger_map_descs); i++) {
+		maps[i].adc_channel_label =
+			mt6360_charger_map_descs[i].provider_channel;
+		maps[i].consumer_dev_name = consumer_name;
+		maps[i].consumer_channel =
+			mt6360_charger_map_descs[i].consumer_channel;
+	}
+
+	ret = devm_iio_map_array_register(&pdev->dev, indio_dev, maps);
+	if (!ret)
+		dev_info(&pdev->dev, "registered charger IIO maps for %s\n",
+			 consumer_name);
+
+	return ret;
+}
+
 static irqreturn_t mt6360_adc_trigger_handler(int irq, void *p)
 {
 	struct iio_poll_func *pf = p;
@@ -347,6 +415,12 @@ static int mt6360_adc_probe(struct platform_device *pdev)
 					      mt6360_adc_trigger_handler, NULL);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to allocate iio trigger buffer\n");
+		return ret;
+	}
+
+	ret = mt6360_adc_register_charger_maps(pdev, indio_dev);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to register charger IIO maps\n");
 		return ret;
 	}
 
