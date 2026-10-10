@@ -6,7 +6,7 @@ menu "Clock driver for MediaTek SoC"
 	depends on ARCH_MEDIATEK || COMPILE_TEST
 
 config COMMON_CLK_MEDIATEK
-	tristate
+	bool
 	select RESET_CONTROLLER
 	help
 	  MediaTek SoCs' clock support.
@@ -1021,3 +1021,180 @@ config COMMON_CLK_MT8516_AUDSYS
 	  This driver supports MediaTek MT8516 audsys clocks.
 
 endmenu
+
+config COMMON_CLK_MT6877
+	bool "Clock driver for MediaTek MT6877"
+	depends on MACH_MT6877
+	select COMMON_CLK_MEDIATEK
+	default MACH_MT6877
+	help
+	  This driver supports MediaTek MT6877 basic clocks,
+	  which is used to control basic clock output.
+	  If you wish to use clock resources from the MT6877 SOC,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_APU
+	bool "Clock driver for MediaTek MT6877 apu"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 apu clocks,
+	  which is used to control apu clock output.
+	  If you wish to use clock resources from the apu device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_AUDIOSYS
+	bool "Clock driver for MediaTek MT6877 audiosys"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 audiosys clocks,
+	  which is used to control audiosys clock output.
+	  If you wish to use clock resources from the audiosys device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_CAM
+	bool "Clock driver for MediaTek MT6877 cam"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 cam clocks,
+	  which is used to control cam clock output.
+	  If you wish to use clock resources from the cam device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_IMG
+	bool "Clock driver for MediaTek MT6877 img"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 img clocks,
+	  which is used to control img clock output.
+	  If you wish to use clock resources from the img device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_I2C
+	bool "Clock driver for MediaTek MT6877 i2c"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 i2c clocks,
+	  which is used to control i2c clock output.
+	  If you wish to use clock resources from the i2c device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_IPESYS
+	bool "Clock driver for MediaTek MT6877 ipesys"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 ipesys clocks,
+	  which is used to control ipesys clock output.
+	  If you wish to use clock resources from the ipesys device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_MDPSYS
+	bool "Clock driver for MediaTek MT6877 mdpsys"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 mdpsys clocks,
+	  which is used to control mdpsys clock output.
+	  If you wish to use clock resources from the mdpsys device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_MFGCFG
+	bool "Clock driver for MediaTek MT6877 mfgcfg"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 mfgcfg clocks,
+	  which is used to control mfgcfg clock output.
+	  If you wish to use clock resources from the mfgcfg device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_DISPSYS
+	bool "Clock driver for MediaTek MT6877 dispsys"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 dispsys clocks,
+	  which is used to control dispsys clock output.
+	  If you wish to use clock resources from the dispsys device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_MSDC
+	bool "Clock driver for MediaTek MT6877 msdc"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 msdc clocks,
+	  which is used to control msdc clock output.
+	  If you wish to use clock resources from the msdc device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_SCP_ADSP
+	bool "Clock driver for MediaTek MT6877 scp_adsp"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 scp_adsp clocks,
+	  which is used to control scp_adsp clock output.
+	  If you wish to use clock resources from the scp_adsp device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_VDE
+	bool "Clock driver for MediaTek MT6877 vde"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 vde clocks,
+	  which is used to control vde clock output.
+	  If you wish to use clock resources from the vde device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MT6877_VEN
+	bool "Clock driver for MediaTek MT6877 ven"
+	depends on COMMON_CLK_MT6877
+	help
+	  This driver supports MediaTek MT6877 ven clocks,
+	  which is used to control ven clock output.
+	  If you wish to use clock resources from the ven device,
+	  say Y. Otherwise, say N.
+
+config COMMON_CLK_MTK_FREQ_HOPPING
+	tristate "MediaTek FREQHOPPING driver"
+	help
+	  FREQHOPPING driver support for MediaTek SOC
+	  If you want to use MediaTek FREQHOPPING driver,
+	  say Y or M here.
+	  If unsure, say N.
+
+config COMMON_CLK_MTK_FREQ_HOPPING_DEBUG
+	bool "Mediate Freq Hopping debug fs"
+	depends on DEBUG_FS && COMMON_CLK_MTK_FREQ_HOPPING
+	help
+	  This option is for debugging purpose
+	  say Y to use debugfs interface to control
+	  Freqhopping.
+	  Otherwise, say N
+
+config COMMON_CLK_MTK_FREQ_HOPPING_SUBSYS
+	bool
+	depends on COMMON_CLK_MTK_FREQ_HOPPING_SSPM
+	help
+	  If FREQHOPPING HW is controlled by other processor,
+	  such as SSPM, this should be set.
+
+config COMMON_CLK_MTK_FREQ_HOPPING_SSPM
+	bool "Mediatek FREQHOPPING controlled by SSPM"
+	depends on COMMON_CLK_MTK_FREQ_HOPPING && MTK_TINYSYS_SSPM_SUPPORT
+	select COMMON_CLK_MTK_FREQ_HOPPING_SUBSYS
+	help
+	  If FREQHOPPING HW is controlled by SSPM,
+	  say Y here.
+	  Otherwise, say N.
+	  Enabling this config will auto set COMMON_CLK_MTK_FREQ_HOPPING_SUBSYS
+
+config MTK_MT6877_FHCTL
+	bool "MT6877 MCUPM top-PLL frequency hopping"
+	depends on MACH_MT6877 && MTK_TINYSYS_MCUPM_SUPPORT=y
+	depends on !MTK_FREQ_HOPPING && !COMMON_CLK_MTK_FREQ_HOPPING
+	default y
+	help
+	  Restore the MT6877 top-domain firmware hopping protocol used by
+	  multimedia DVFS, with transport, transaction and PCW readback checks.
+	  This does not touch the separately power-gated GPU/APU FHCTL banks.
+	  Enable this for MT6877 multimedia DVFS with the stock MCUPM firmware.
+	  A failed transaction blocks further hops instead of assuming that the
+	  requested frequency was reached. Other FHCTL providers must stay off
+	  because they would compete for the same firmware mailbox channel.
+

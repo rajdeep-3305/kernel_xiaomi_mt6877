@@ -149,3 +149,33 @@ obj-$(CONFIG_COMMON_CLK_MT8365_VDEC) += clk-mt8365-vdec.o
 obj-$(CONFIG_COMMON_CLK_MT8365_VENC) += clk-mt8365-venc.o
 obj-$(CONFIG_COMMON_CLK_MT8516) += clk-mt8516-apmixedsys.o clk-mt8516.o
 obj-$(CONFIG_COMMON_CLK_MT8516_AUDSYS) += clk-mt8516-aud.o
+
+obj-$(CONFIG_MACH_MT6877) += clk-fixup-div.o clkchk.o
+obj-$(CONFIG_COMMON_CLK_MT6877) += clk-mt6877.o clk-mt6877-pg.o clk-mtk-v1.o clk-bringup.o clkchk.o clkchk-mt6877.o clk-fmeter-mt6877.o
+obj-$(CONFIG_COMMON_CLK_MT6877_APU) += clk-mt6877-apu.o
+obj-$(CONFIG_COMMON_CLK_MT6877_AUDIOSYS) += clk-mt6877-audsys.o
+obj-$(CONFIG_COMMON_CLK_MT6877_CAM) += clk-mt6877-cam.o
+obj-$(CONFIG_COMMON_CLK_MT6877_IMG) += clk-mt6877-img.o
+obj-$(CONFIG_COMMON_CLK_MT6877_I2C) += clk-mt6877-i2c.o
+obj-$(CONFIG_COMMON_CLK_MT6877_IPESYS) += clk-mt6877-ipe.o
+obj-$(CONFIG_COMMON_CLK_MT6877_MDPSYS) += clk-mt6877-mdp.o
+obj-$(CONFIG_COMMON_CLK_MT6877_MFGCFG) += clk-mt6877-mfgcfg.o
+obj-$(CONFIG_COMMON_CLK_MT6877_DISPSYS) += clk-mt6877-mm.o
+obj-$(CONFIG_COMMON_CLK_MT6877_MSDC) += clk-mt6877-msdc.o
+obj-$(CONFIG_COMMON_CLK_MT6877_SCP_ADSP) += clk-mt6877-scp_par.o
+obj-$(CONFIG_COMMON_CLK_MT6877_VDE) += clk-mt6877-vde.o
+obj-$(CONFIG_COMMON_CLK_MT6877_VEN) += clk-mt6877-ven.o
+ifeq ($(CONFIG_DEBUG_FS),y)
+obj-$(CONFIG_MACH_MT6877) += clkdbg.o clkdbg-mt6877.o
+endif
+obj-$(CONFIG_COMMON_CLK_MTK_FREQ_HOPPING) += fhctl.o
+obj-$(CONFIG_MTK_MT6877_FHCTL) += clk-mt6877-fhctl.o
+fhctl-y += clk-fhctl.o
+fhctl-$(CONFIG_DEBUG_FS) += clk-fhctl-debug.o
+ifneq ($(CONFIG_COMMON_CLK_MTK_FREQ_HOPPING_SUBSYS),y)
+fhctl-y += clk-fhctl-ap.o
+else
+fhctl-$(CONFIG_COMMON_CLK_MTK_FREQ_HOPPING_SSPM) += clk-fhctl-sspm.o
+endif
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/sspm/
+ccflags-y += -I$(srctree)/drivers/clk/mediatek/
