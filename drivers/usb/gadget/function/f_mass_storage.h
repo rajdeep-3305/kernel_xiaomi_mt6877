@@ -141,4 +141,12 @@ void fsg_config_from_params(struct fsg_config *cfg,
 			    const struct fsg_module_parameters *params,
 			    unsigned int fsg_num_buffers);
 
+#ifdef CONFIG_USB_CONFIGFS_MTK_FASTMETA
+ssize_t fsg_inquiry_show(struct fsg_common *common, char *buf);
+ssize_t fsg_inquiry_store(struct fsg_common *common, const char *buf,
+			  size_t size);
+int fsg_sysfs_update(struct fsg_common *common, struct device *dev,
+			 bool create);
+#endif
+
 #endif /* USB_F_MASS_STORAGE_H */

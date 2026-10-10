@@ -288,6 +288,9 @@ struct fsg_common {
 	void			*private_data;
 
 	char inquiry_string[INQUIRY_STRING_LEN];
+#ifdef CONFIG_USB_CONFIGFS_MTK_FASTMETA
+	char name[FSG_MAX_LUNS][LUN_NAME_LEN];
+#endif
 };
 
 struct fsg_dev {
@@ -2905,6 +2908,7 @@ int fsg_common_create_lun(struct fsg_common *common, struct fsg_lun_config *cfg,
 	lun->ro = cfg->cdrom || cfg->ro;
 	lun->initially_ro = lun->ro;
 	lun->removable = !!cfg->removable;
+	lun->nofua = !!cfg->nofua;
 
 	if (!common->sysfs) {
 		/* we DON'T own the name!*/
@@ -3027,6 +3031,57 @@ static void fsg_common_release(struct fsg_common *common)
 
 
 /*-------------------------------------------------------------------------*/
+
+#ifdef CONFIG_USB_CONFIGFS_MTK_FASTMETA
+ssize_t fsg_inquiry_show(struct fsg_common *common, char *buf)
+{
+	return sysfs_emit(buf, "%s\n", common->inquiry_string);
+}
+
+ssize_t fsg_inquiry_store(struct fsg_common *common, const char *buf,
+			  size_t size)
+{
+	if (size >= sizeof(common->inquiry_string))
+		return -EINVAL;
+
+	if (sscanf(buf, "%28s", common->inquiry_string) != 1)
+		return -EINVAL;
+	return size;
+}
+
+int fsg_sysfs_update(struct fsg_common *common, struct device *dev,
+			 bool create)
+{
+	int ret = 0, i;
+	int nluns = _fsg_common_get_max_lun(common) + 1;
+
+	if (nluns <= 0 || nluns > FSG_MAX_LUNS)
+		return -EINVAL;
+
+	if (create) {
+		for (i = 0; i < nluns; i++) {
+			if (i == 0)
+				snprintf(common->name[i], LUN_NAME_LEN, "lun");
+			else
+				snprintf(common->name[i], LUN_NAME_LEN, "lun%d",
+					 i - 1);
+			ret = sysfs_create_link(&dev->kobj,
+						&common->luns[i]->dev.kobj,
+						common->name[i]);
+			if (ret)
+				goto remove_sysfs;
+		}
+		return 0;
+	}
+
+	i = nluns;
+remove_sysfs:
+	while (i-- > 0)
+		sysfs_remove_link(&dev->kobj, common->name[i]);
+
+	return ret;
+}
+#endif
 
 static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 {
@@ -3607,6 +3662,7 @@ void fsg_config_from_params(struct fsg_config *cfg,
 		lun->ro = !!params->ro[i];
 		lun->cdrom = !!params->cdrom[i];
 		lun->removable = !!params->removable[i];
+		lun->nofua = !!params->nofua[i];
 		lun->filename =
 			params->file_count > i && params->file[i][0]
 			? params->file[i]
