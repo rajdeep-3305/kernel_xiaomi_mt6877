@@ -780,6 +780,14 @@ struct task_struct {
 	int				normal_prio;
 	unsigned int			rt_priority;
 
+#ifdef CONFIG_MTK_TASK_TURBO
+	unsigned int			turbo;
+	unsigned int			render;
+	atomic_t			inherit_types;
+	atomic_t			inherit_cnt;
+	short				nice_backup;
+#endif
+
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
 	struct sched_dl_entity		dl;
@@ -1545,6 +1553,11 @@ struct task_struct {
 	struct user_event_mm		*user_event_mm;
 #endif
 
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	/* MT6877 fair scheduler CPU preference; inherited across fork. */
+	u32				ruby_cpu_prefer;
+#endif
+
 	/*
 	 * New fields for task_struct should be added above here, so that
 	 * they are included in the randomized portion of task_struct.
@@ -1943,6 +1956,17 @@ extern void sched_set_fifo_low(struct task_struct *p);
 extern void sched_set_normal(struct task_struct *p, int nice);
 extern int sched_setattr(struct task_struct *, const struct sched_attr *);
 extern int sched_setattr_nocheck(struct task_struct *, const struct sched_attr *);
+#ifdef CONFIG_MTK_FPSGO_V3
+int ruby_fpsgo_set_top_app_uclamp(unsigned int percent);
+#endif
+#ifdef CONFIG_MTK_GBE
+int ruby_gbe_set_top_app_uclamp(unsigned int percent);
+#endif
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+int ruby_perfserv_set_group_uclamp(unsigned int group, unsigned int percent);
+int ruby_perfserv_set_group_boost(unsigned int group, int boost);
+int ruby_perfserv_set_group_prefer_idle(unsigned int group, bool enable);
+#endif
 extern struct task_struct *idle_task(int cpu);
 
 /**
