@@ -1,0 +1,18 @@
+config VIDEO_MEDIATEK_VCU
+	bool "MediaTek legacy Video Communication Unit"
+	depends on VIDEO_DEV
+	select VIDEOBUF2_DMA_CONTIG
+	help
+	  Enable the VCU interface used by legacy MediaTek video firmware and
+	  userspace daemons.
+
+config VIDEO_MEDIATEK_VCODEC_LEGACY
+	bool "MediaTek legacy VCU video codec"
+	depends on V4L_MEM2MEM_DRIVERS
+	depends on VIDEO_MEDIATEK_VCU
+	select MEDIA_CONTROLLER
+	select V4L2_MEM2MEM_DEV
+	select VIDEOBUF2_DMA_CONTIG
+	help
+	  Enable the legacy MediaTek encoder and decoder used by vendor VCU
+	  firmware and userspace blobs.
