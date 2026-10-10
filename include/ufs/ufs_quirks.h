@@ -116,4 +116,10 @@ struct ufs_dev_quirk {
 /* Some UFS 4 devices do not support the qTimestamp attribute */
 #define UFS_DEVICE_QUIRK_NO_TIMESTAMP_SUPPORT	(1 << 13)
 
+/* Some UFS devices require the L2P entry to be byte-swapped for HPB READ. */
+#define UFS_DEVICE_QUIRK_SWAP_L2P_ENTRY_FOR_HPB_READ	(1 << 14)
+
+/* Some UFS devices cannot flush WriteBooster during Hibern8. */
+#define UFS_DEVICE_QUIRK_WRITE_BOOSETER_FLUSH	(1U << 31)
+
 #endif /* UFS_QUIRKS_H_ */
