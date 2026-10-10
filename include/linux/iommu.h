@@ -7,6 +7,7 @@
 #ifndef __LINUX_IOMMU_H
 #define __LINUX_IOMMU_H
 
+#include <linux/dma-direction.h>
 #include <linux/scatterlist.h>
 #include <linux/device.h>
 #include <linux/types.h>
@@ -1132,6 +1133,13 @@ static inline void iommu_debugfs_setup(void) {}
 /* Setup call for arch DMA mapping code */
 void iommu_setup_dma_ops(struct device *dev, u64 dma_base, u64 dma_limit);
 
+bool iommu_dma_sync_sgtable_is_cache_only(struct device *dev,
+					  struct sg_table *table);
+
+int iommu_dma_sync_sgtable_range(struct device *dev, struct sg_table *table,
+				 enum dma_data_direction direction,
+				 size_t offset, size_t len, bool for_cpu);
+
 int iommu_get_msi_cookie(struct iommu_domain *domain, dma_addr_t base);
 
 int iommu_dma_prepare_msi(struct msi_desc *desc, phys_addr_t msi_addr);
@@ -1144,6 +1152,20 @@ struct msi_msg;
 
 static inline void iommu_setup_dma_ops(struct device *dev, u64 dma_base, u64 dma_limit)
 {
+}
+
+static inline bool iommu_dma_sync_sgtable_is_cache_only(struct device *dev,
+							struct sg_table *table)
+{
+	return false;
+}
+
+static inline int iommu_dma_sync_sgtable_range(struct device *dev,
+					       struct sg_table *table,
+					       enum dma_data_direction direction,
+					       size_t offset, size_t len, bool for_cpu)
+{
+	return -EOPNOTSUPP;
 }
 
 static inline int iommu_get_msi_cookie(struct iommu_domain *domain, dma_addr_t base)
