@@ -482,7 +482,16 @@ enum {
 #define UPIU_RSP_CODE_OFFSET		8
 
 enum {
+	MASK_SCSI_STATUS		= 0xFF,
+	MASK_TASK_RESPONSE		= 0xFF00,
+	MASK_RSP_UPIU_RESULT		= 0xFFFF,
+	MASK_QUERY_DATA_SEG_LEN		= 0xFFFF,
+	MASK_RSP_UPIU_DATA_SEG_LEN	= 0xFFFF,
+	MASK_RSP_EXCEPTION_EVENT	= 0x10000,
 	MASK_TM_SERVICE_RESP		= 0xFF,
+#if defined(CONFIG_SCSI_UFS_HPB) || defined(CONFIG_SCSI_SKHPB)
+	MASK_RSP_UPIU_HPB_UPDATE_ALERT	= 0x20000,
+#endif
 };
 
 /* Task management service response */
@@ -518,6 +527,34 @@ struct utp_cmd_rsp {
 	u8 sense_data[UFS_SENSE_SIZE];
 };
 
+#ifdef CONFIG_SCSI_UFS_HPB
+struct ufshpb_active_field {
+	__be16 active_rgn;
+	__be16 active_srgn;
+};
+
+#define HPB_ACT_FIELD_SIZE 4
+
+/**
+ * struct utp_hpb_rsp - HPB response extension carried in a response UPIU.
+ */
+struct utp_hpb_rsp {
+	__be32 residual_transfer_count;
+	__be32 reserved1[4];
+	__be16 sense_data_len;
+	u8 desc_type;
+	u8 additional_len;
+	u8 hpb_op;
+	u8 lun;
+	u8 active_rgn_cnt;
+	u8 inactive_rgn_cnt;
+	struct ufshpb_active_field hpb_active_field[2];
+	__be16 hpb_inactive_field[2];
+};
+
+#define UTP_HPB_RSP_SIZE 40
+#endif
+
 /**
  * struct utp_upiu_rsp - general upiu response structure
  * @header: UPIU header structure DW-0 to DW-2
@@ -528,6 +565,9 @@ struct utp_upiu_rsp {
 	struct utp_upiu_header header;
 	union {
 		struct utp_cmd_rsp sr;
+#ifdef CONFIG_SCSI_UFS_HPB
+		struct utp_hpb_rsp hr;
+#endif
 		struct utp_upiu_query qr;
 	};
 };
@@ -577,6 +617,11 @@ struct ufs_dev_info {
 	u8	b_presrv_uspc_en;
 
 	bool    b_advanced_rpmb_en;
+
+#ifdef CONFIG_SCSI_UFS_HPB
+	/* Set when the device advertises HPB and its enable flag is active. */
+	bool	hpb_enabled;
+#endif
 
 	/* UFS EXT_IID Enable */
 	bool	b_ext_iid_en;
