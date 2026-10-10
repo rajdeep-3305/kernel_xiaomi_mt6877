@@ -17,3 +17,8 @@ source "drivers/tee/optee/Kconfig"
 source "drivers/tee/amdtee/Kconfig"
 
 endif
+
+source "drivers/tee/teei/Kconfig"
+
+source "drivers/tee/tkcore/Kconfig"
+
