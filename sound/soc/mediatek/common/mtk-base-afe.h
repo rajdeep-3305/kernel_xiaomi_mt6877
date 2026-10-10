@@ -9,26 +9,7 @@
 #ifndef _MTK_BASE_AFE_H_
 #define _MTK_BASE_AFE_H_
 
-#include <linux/soc/mediatek/mtk_sip_svc.h>
-
 #define MTK_STREAM_NUM (SNDRV_PCM_STREAM_LAST + 1)
-#define MTK_SIP_AUDIO_CONTROL MTK_SIP_SMC_CMD(0x517)
-
-/* SMC CALL Operations */
-enum mtk_audio_smc_call_op {
-	MTK_AUDIO_SMC_OP_INIT = 0,
-	MTK_AUDIO_SMC_OP_DRAM_REQUEST,
-	MTK_AUDIO_SMC_OP_DRAM_RELEASE,
-	MTK_AUDIO_SMC_OP_SRAM_REQUEST,
-	MTK_AUDIO_SMC_OP_SRAM_RELEASE,
-	MTK_AUDIO_SMC_OP_ADSP_REQUEST,
-	MTK_AUDIO_SMC_OP_ADSP_RELEASE,
-	MTK_AUDIO_SMC_OP_DOMAIN_SIDEBANDS,
-	MTK_AUDIO_SMC_OP_BTCVSD_WRITE,
-	MTK_AUDIO_SMC_OP_BTCVSD_UPDATE_CTRL_CLEAR,
-	MTK_AUDIO_SMC_OP_BTCVSD_UPDATE_CTRL_UNDERFLOW,
-	MTK_AUDIO_SMC_OP_NUM
-};
 
 struct mtk_base_memif_data {
 	int id;
@@ -46,31 +27,24 @@ struct mtk_base_memif_data {
 	int mono_shift;
 	int mono_invert;
 	int quad_ch_reg;
-	int quad_ch_mask;
+	int quad_ch_mask_shift;
 	int quad_ch_shift;
-	int int_odd_flag_reg;
-	int int_odd_flag_shift;
 	int enable_reg;
 	int enable_shift;
 	int hd_reg;
 	int hd_shift;
-	int hd_align_reg;
-	int hd_align_mshift;
 	int msb_reg;
 	int msb_shift;
-	int msb_end_reg;
-	int msb_end_shift;
+	int msb2_reg;
+	int msb2_shift;
 	int agent_disable_reg;
 	int agent_disable_shift;
-	int ch_num_reg;
-	int ch_num_shift;
-	int ch_num_maskbit;
 	/* playback memif only */
 	int pbuf_reg;
-	int pbuf_mask;
+	int pbuf_mask_shift;
 	int pbuf_shift;
 	int minlen_reg;
-	int minlen_mask;
+	int minlen_mask_shift;
 	int minlen_shift;
 };
 
@@ -86,17 +60,27 @@ struct mtk_base_irq_data {
 	int irq_en_shift;
 	int irq_clr_reg;
 	int irq_clr_shift;
-	int irq_status_shift;
+	int irq_ap_en_reg;
+	int irq_ap_en_shift;
+	int irq_scp_en_reg;
+	int irq_scp_en_shift;
 };
 
+struct dentry;
 struct device;
 struct list_head;
 struct mtk_base_afe_memif;
 struct mtk_base_afe_irq;
 struct mtk_base_afe_dai;
 struct regmap;
+struct iov_iter;
 struct snd_pcm_substream;
 struct snd_soc_dai;
+struct snd_soc_dai_driver;
+typedef int (*mtk_sp_copy_f)(struct snd_pcm_substream *substream,
+				 int channel, unsigned long hwoff,
+				 struct iov_iter *iter,
+				 unsigned long bytes);
 
 struct mtk_base_afe {
 	void __iomem *base_addr;
@@ -114,10 +98,9 @@ struct mtk_base_afe {
 
 	struct mtk_base_afe_memif *memif;
 	int memif_size;
+	int memif_32bit_supported;
 	struct mtk_base_afe_irq *irqs;
 	int irqs_size;
-	int memif_32bit_supported;
-	bool preallocate_buffers;
 
 	struct list_head sub_dais;
 	struct snd_soc_dai_driver *dai_drivers;
@@ -132,22 +115,49 @@ struct mtk_base_afe {
 			  int dai_id, unsigned int rate);
 	int (*get_memif_pbuf_size)(struct snd_pcm_substream *substream);
 
+	void *sram;
 	int (*request_dram_resource)(struct device *dev);
 	int (*release_dram_resource)(struct device *dev);
 
+	struct dentry *debugfs;
+	const struct mtk_afe_debug_cmd *debug_cmds;
+
 	void *platform_priv;
+
+	int (*copy)(struct snd_pcm_substream *substream,
+		    int channel, unsigned long hwoff,
+		    struct iov_iter *iter, unsigned long bytes,
+		    mtk_sp_copy_f sp_copy);
 };
 
 struct mtk_base_afe_memif {
-	unsigned int phys_buf_addr;
-	int buffer_size;
+	unsigned char *dma_area;
+	dma_addr_t dma_addr;
+	size_t dma_bytes;
+
 	struct snd_pcm_substream *substream;
 	const struct mtk_base_memif_data *data;
 	int irq_usage;
 	int const_irq;
-	unsigned char *dma_area;
-	dma_addr_t dma_addr;
-	size_t dma_bytes;
+	unsigned int phys_buf_addr;
+	int buffer_size;
+
+	int using_sram;
+	int use_dram_only;
+	int use_adsp_share_mem;
+
+	bool vow_bargein_enable;
+
+#if defined(CONFIG_SND_SOC_MTK_SCP_SMARTPA)
+	bool scp_spk_enable;
+#endif
+#if defined(CONFIG_MTK_ULTRASND_PROXIMITY)
+	bool scp_ultra_enable;
+#endif
+	int use_mmap_share_mem;  // 1 : dl   2 : ul
+
+	bool ack_enable;
+	int (*ack)(struct snd_pcm_substream *substream);
 };
 
 struct mtk_base_afe_irq {
