@@ -82,6 +82,10 @@ struct io_pgtable_cfg {
 	 *	extend the translation table base support up to 35 bits PA, the
 	 *	encoding format is same with IO_PGTABLE_QUIRK_ARM_MTK_EXT.
 	 *
+	 * IO_PGTABLE_QUIRK_ARM_MTK_NO_SHARE: (ARM v7s format) Clear the shareable
+	 *	attribute for MediaTek IOMMUs which use that bit to select ACP instead
+	 *	of memory shareability. Their ordinary mappings must not select ACP.
+	 *
 	 * IO_PGTABLE_QUIRK_ARM_TTBR1: (ARM LPAE format) Configure the table
 	 *	for use in the upper half of a split address space.
 	 *
@@ -94,6 +98,7 @@ struct io_pgtable_cfg {
 	#define IO_PGTABLE_QUIRK_ARM_MTK_TTBR_EXT	BIT(4)
 	#define IO_PGTABLE_QUIRK_ARM_TTBR1		BIT(5)
 	#define IO_PGTABLE_QUIRK_ARM_OUTER_WBWA		BIT(6)
+	#define IO_PGTABLE_QUIRK_ARM_MTK_NO_SHARE		BIT(7)
 	unsigned long			quirks;
 	unsigned long			pgsize_bitmap;
 	unsigned int			ias;
