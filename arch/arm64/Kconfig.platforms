@@ -162,6 +162,44 @@ config ARCH_MEDIATEK
 	  This enables support for MediaTek MT27xx, MT65xx, MT76xx
 	  & MT81xx ARMv8 SoCs
 
+config MACH_MT6877
+	bool "MediaTek MT6877 (Dimensity 1080)"
+	depends on ARCH_MEDIATEK
+	select ARM_MTK_NEW_ARCH_CPUIDLE
+	select GENERIC_TIME
+	select GENERIC_CLOCKEVENTS
+	select ARM_AMBA
+	select ARM_DSU_PMU
+	select HAVE_SMP
+	select IRQ_DOMAIN
+	select MTK_GIC_V3_EXT
+	select MTK_GIC_TARGET_ALL
+	# MTK_CACHE_PARITY_CHECK removed — depends on MTK_SDA which needs AEE porting
+	select GENERIC_SCHED_CLOCK
+	select PINCTRL
+	select PINCTRL_MT6877
+	select CPU_IDLE
+	select MTK_BASE_POWER
+	select ARM64_CRYPTO
+	select CRYPTO_SHA2_ARM64_CE
+	select CRYPTO_AES_ARM64_CE_BLK
+	select MFD_SYSCON
+	select MTK_TIMER
+	select MEDIATEK_MC if MEMORY
+	select MTK_LPM
+	select MTK_LOW_POWER_MODULE
+	select MTK_SPMTWAM
+	select MTK_LPM_MT6877
+	select OVERLAY_FS
+	select EXT4_FS
+	select EXT4_FS_SECURITY
+	select EXT4_ENCRYPTION
+	select F2FS_FS
+	select F2FS_FS_ENCRYPTION
+	help
+	  This enables support for MediaTek MT6877 (Dimensity 1080) SoC,
+	  used in devices like Xiaomi Redmi Note 12 Pro (ruby).
+
 config ARCH_MESON
 	bool "Amlogic Platforms"
 	help
