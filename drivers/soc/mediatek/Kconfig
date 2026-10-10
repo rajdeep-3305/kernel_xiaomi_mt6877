@@ -92,3 +92,63 @@ config MTK_SVS
 	  driver could apply SVS bank voltage to PMIC/Buck.
 
 endmenu
+
+config MTK_DVFSRC
+	tristate "MediaTek DVFSRC Support"
+	depends on ARCH_MEDIATEK
+	help
+	  Say yes here to add support for the MediaTek DVFSRC (dynamic voltage
+	  and frequency scaling resource collector).
+
+config MTK_SCPSYS_BRINGUP
+	tristate "MediaTek SCPSYS bring Up Support"
+	depends on MTK_SCPSYS
+	help
+	  Say yes here to support MediaTek SCPSYS power on for early chip
+	  bring up.
+
+config MTK_IPI
+	tristate "MediaTek IPI Support"
+	depends on RPMSG_MTK
+	help
+	  Say yes here to add support for the MediaTek IPI between tinysys.
+	  MTK IPI provides Linux to/from tinysys communication based on
+	  rpmsg.
+
+config MTK_MBOX
+	tristate "MediaTek Mbox Support"
+	help
+	  Say yes here to add support for the MediaTek Mbox driver.
+	  MTK MBOX provides SRAM-based mailbox channels and interrupt
+	  signaling between AP and tinysys.
+
+config MTK_MMDVFS
+	tristate "MediaTek MMDVFS Support"
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on REGULATOR_MTK_DVFSRC
+	help
+	  Say yes here to add support for the MediaTek Multimedia DVFS driver.
+
+config MTK_LPM
+	bool "MediaTek Low Power Manager"
+	depends on ARCH_MEDIATEK
+	help
+	  Say yes here to add support for the MediaTek Low Power Manager driver.
+
+config MTK_PMQOS
+	tristate "MediaTek PMQOS Framework support"
+	depends on ARCH_MEDIATEK
+	help
+	  Say yes here to support the MediaTek PMQOS framework driver.
+
+config MTK_SOCINFO
+	tristate "MediaTek SoCInfo Driver"
+	select SOC_BUS
+	help
+	  Say yes here to support the MediaTek SoCInfo driver, exposing SoC
+	  information to userspace.
+
+source "drivers/soc/mediatek/devapc/Kconfig"
+
+source "drivers/soc/mediatek/devmpu/Kconfig"
+
