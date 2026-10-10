@@ -163,6 +163,11 @@ struct cpuset {
 	/* for custom sched domain */
 	int relax_domain_level;
 
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	/* Stock MediaTek cpuset CPU preference: 0=none, 1=big, 2=little. */
+	u64 prefer_cpu;
+#endif
+
 	/* number of CPUs in subparts_cpus */
 	int nr_subparts_cpus;
 
@@ -2799,6 +2804,9 @@ typedef enum {
 	FILE_SCHED_LOAD_BALANCE,
 	FILE_PARTITION_ROOT,
 	FILE_SCHED_RELAX_DOMAIN_LEVEL,
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	FILE_PREFER_CPU,
+#endif
 	FILE_MEMORY_PRESSURE_ENABLED,
 	FILE_MEMORY_PRESSURE,
 	FILE_SPREAD_PAGE,
@@ -2832,6 +2840,14 @@ static int cpuset_write_u64(struct cgroup_subsys_state *css, struct cftype *cft,
 	case FILE_SCHED_LOAD_BALANCE:
 		retval = update_flag(CS_SCHED_LOAD_BALANCE, cs, val);
 		break;
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	case FILE_PREFER_CPU:
+		if (val > 2)
+			retval = -EINVAL;
+		else
+			WRITE_ONCE(cs->prefer_cpu, val);
+		break;
+#endif
 	case FILE_MEMORY_MIGRATE:
 		retval = update_flag(CS_MEMORY_MIGRATE, cs, val);
 		break;
@@ -3000,6 +3016,10 @@ static u64 cpuset_read_u64(struct cgroup_subsys_state *css, struct cftype *cft)
 		return is_mem_hardwall(cs);
 	case FILE_SCHED_LOAD_BALANCE:
 		return is_sched_load_balance(cs);
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	case FILE_PREFER_CPU:
+		return READ_ONCE(cs->prefer_cpu);
+#endif
 	case FILE_MEMORY_MIGRATE:
 		return is_memory_migrate(cs);
 	case FILE_MEMORY_PRESSURE_ENABLED:
@@ -3167,6 +3187,15 @@ static struct cftype legacy_files[] = {
 		.private = FILE_SCHED_RELAX_DOMAIN_LEVEL,
 	},
 
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	{
+		.name = "prefer_cpu",
+		.read_u64 = cpuset_read_u64,
+		.write_u64 = cpuset_write_u64,
+		.private = FILE_PREFER_CPU,
+	},
+#endif
+
 	{
 		.name = "memory_migrate",
 		.read_u64 = cpuset_read_u64,
@@ -3255,6 +3284,15 @@ static struct cftype dfl_files[] = {
 		.private = FILE_SUBPARTS_CPULIST,
 		.flags = CFTYPE_DEBUG,
 	},
+
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	{
+		.name = "prefer_cpu",
+		.read_u64 = cpuset_read_u64,
+		.write_u64 = cpuset_write_u64,
+		.private = FILE_PREFER_CPU,
+	},
+#endif
 
 	{ }	/* terminate */
 };
@@ -4033,6 +4071,20 @@ void cpuset_cpus_allowed(struct task_struct *tsk, struct cpumask *pmask)
 	spin_unlock_irqrestore(&callback_lock, flags);
 }
 EXPORT_SYMBOL_GPL(cpuset_cpus_allowed);
+
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+int ruby_cpuset_prefer_cpu(struct task_struct *task)
+{
+	int prefer;
+
+	rcu_read_lock();
+	prefer = READ_ONCE(task_cs(task)->prefer_cpu);
+	rcu_read_unlock();
+
+	return prefer;
+}
+EXPORT_SYMBOL_GPL(ruby_cpuset_prefer_cpu);
+#endif
 /**
  * cpuset_cpus_allowed_fallback - final fallback before complete catastrophe.
  * @tsk: pointer to task_struct with which the scheduler is struggling
