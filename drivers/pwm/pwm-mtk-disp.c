@@ -11,6 +11,7 @@
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
 #include <linux/slab.h>
@@ -227,7 +228,6 @@ static int mtk_disp_pwm_get_state(struct pwm_chip *chip,
 static const struct pwm_ops mtk_disp_pwm_ops = {
 	.apply = mtk_disp_pwm_apply,
 	.get_state = mtk_disp_pwm_get_state,
-	.owner = THIS_MODULE,
 };
 
 static int mtk_disp_pwm_probe(struct platform_device *pdev)
@@ -268,11 +268,13 @@ static int mtk_disp_pwm_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void mtk_disp_pwm_remove(struct platform_device *pdev)
+static int mtk_disp_pwm_remove(struct platform_device *pdev)
 {
 	struct mtk_disp_pwm *mdp = platform_get_drvdata(pdev);
 
 	pwmchip_remove(&mdp->chip);
+
+	return 0;
 }
 
 static const struct mtk_pwm_data mt2701_pwm_data = {
@@ -320,7 +322,7 @@ static struct platform_driver mtk_disp_pwm_driver = {
 		.of_match_table = mtk_disp_pwm_of_match,
 	},
 	.probe = mtk_disp_pwm_probe,
-	.remove_new = mtk_disp_pwm_remove,
+	.remove = mtk_disp_pwm_remove,
 };
 module_platform_driver(mtk_disp_pwm_driver);
 
