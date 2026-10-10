@@ -500,6 +500,14 @@ static void mtk_spi_prepare_transfer(struct spi_master *master,
 		reg_val |= (((sck_time - 1) & 0xffff)
 			   << SPI_CFG2_SCK_LOW_OFFSET);
 		writel(reg_val, mdata->base + SPI_CFG2_REG);
+
+		/* Protect devices which do not provide an explicit CS setup delay. */
+		reg_val = readl(mdata->base + SPI_CFG0_REG);
+		if (!((reg_val >> SPI_ADJUST_CFG0_CS_SETUP_OFFSET) & 0xffff)) {
+			reg_val |= ((((sck_time * 2) - 1) & 0xffff)
+				   << SPI_ADJUST_CFG0_CS_SETUP_OFFSET);
+			writel(reg_val, mdata->base + SPI_CFG0_REG);
+		}
 	} else {
 		reg_val = readl(mdata->base + SPI_CFG0_REG);
 		reg_val &= ~(0xff << SPI_CFG0_SCK_HIGH_OFFSET);
