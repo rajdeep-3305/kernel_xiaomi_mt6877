@@ -9,5 +9,6 @@ obj-$(CONFIG_USB_LIBCOMPOSITE)	+= libcomposite.o
 libcomposite-y			:= usbstring.o config.o epautoconf.o
 libcomposite-y			+= composite.o functions.o configfs.o u_f.o
 libcomposite-$(CONFIG_ANDROID_USB_CONFIGFS_UEVENT) += android_configfs_uevent.o
+libcomposite-$(CONFIG_USB_CONFIGFS_MTK_FASTMETA) += meta.o
 
 obj-$(CONFIG_USB_GADGET)	+= udc/ function/ legacy/

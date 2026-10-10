@@ -544,3 +544,16 @@ config ANDROID_USB_CONFIGFS_F_ACC
 source "drivers/usb/gadget/legacy/Kconfig"
 
 endif # USB_GADGET
+
+config USB_F_MTK_FASTMETA
+	tristate
+
+config USB_CONFIGFS_MTK_FASTMETA
+	bool "MediaTek Fast META mode"
+	depends on USB_CONFIGFS && BLOCK
+	depends on USB_CONFIGFS_MASS_STORAGE && USB_CONFIGFS_ACM
+	select USB_F_MTK_FASTMETA
+	help
+	  Enable MediaTek's factory Fast META composite gadget used for modem
+	  calibration and RF parameter download.
+
