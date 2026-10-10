@@ -22,6 +22,15 @@
 
 #include <linux/types.h>
 
+/*
+ * Provide a fallback for __uint128_t on compilers that lack it (e.g. 32-bit
+ * ARM userspace).  The struct layout must match the 128-bit register size.
+ */
+#if !defined(__SIZEOF_INT128__) && !defined(__ARM64_UINT128_T_DEFINED)
+#define __ARM64_UINT128_T_DEFINED
+typedef struct { __u64 lo, hi; } __attribute__((aligned(16))) __uint128_t;
+#endif
+
 #include <asm/hwcap.h>
 #include <asm/sve_context.h>
 
