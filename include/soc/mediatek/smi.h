@@ -25,6 +25,14 @@ struct mtk_smi_larb_iommu {
 	unsigned char  bank[32];
 };
 
+int mtk_smi_larb_get(struct device *larbdev);
+void mtk_smi_larb_put(struct device *larbdev);
+int mtk_smi_larb_reapply_mmu(struct device *larbdev);
+int mtk_smi_larb_set_ostd(unsigned int larb_id, unsigned int port,
+			  unsigned int ostd);
+int mtk_smi_common_set_bwl(unsigned int common_id, unsigned int port,
+			   unsigned int bwl, bool soft);
+
 #endif
 
 #endif
