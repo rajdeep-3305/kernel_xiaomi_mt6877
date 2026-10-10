@@ -1986,3 +1986,14 @@ config RTC_DRV_POLARFIRE_SOC
 	  will be called "rtc-mpfs".
 
 endif # RTC_CLASS
+
+config RTC_DRV_MT6358
+	tristate "Mediatek Real Time Clock driver"
+	depends on MFD_MT6358 || (COMPILE_TEST && IRQ_DOMAIN)
+	help
+	  This selects the Mediatek(R) RTC driver. RTC is part of Mediatek
+	  MT6358 PMIC. You should enable MT6358 PMIC MFD before select
+	  Mediatek(R) RTC driver.
+
+	  If you want to use Mediatek(R) RTC interface, select Y or M here.
+
