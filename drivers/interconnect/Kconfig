@@ -22,3 +22,6 @@ config INTERCONNECT_CLK
 	  Support for wrapping clocks into the interconnect nodes.
 
 endif
+
+source "drivers/interconnect/mediatek/Kconfig"
+
