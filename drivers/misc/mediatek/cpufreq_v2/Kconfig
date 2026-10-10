@@ -1,0 +1,27 @@
+config MEDIATEK_CPU_DVFS
+	bool "MediaTek CPU DVFS"
+	depends on ARCH_MEDIATEK && CPU_FREQ
+	help
+	  Enable the MediaTek firmware-assisted CPU dynamic voltage and
+	  frequency scaling driver.
+
+config MEDIATEK_CPU_DVFS_MT6877
+	bool "MediaTek MT6877 CPU DVFS support"
+	depends on MEDIATEK_CPU_DVFS && MACH_MT6877
+	depends on MTK_TINYSYS_MCUPM_SUPPORT
+	help
+	  Enable the MT6877 OPP tables and MCUPM interface used by the
+	  MediaTek CPU DVFS driver.
+
+config MTK_MT6877_CPU_THERMAL
+	bool "MT6877 legacy thermal CPU power-budget enforcement"
+	depends on MEDIATEK_CPU_DVFS_MT6877 && MTK_LEGACY_THERMAL
+	depends on !MTK_PPM && !MTK_CPU_FREQ
+	default y
+	help
+	  Connect the legacy thermal controller's milliwatt budgets to CPUfreq
+	  frequency QoS limits using the MT6877 UPower characterization tables.
+	  Account for all possible CPUs without relying on the old HPS hotplug
+	  client. Budgets below the all-core minimum saturate at minimum
+	  frequency; the thermal shutdown and LVTS hardware reset paths remain
+	  necessary. This is not a replacement for temperature calibration.
