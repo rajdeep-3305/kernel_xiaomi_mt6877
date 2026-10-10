@@ -66,6 +66,9 @@
 #undef CREATE_TRACE_POINTS
 
 #include <trace/hooks/cgroup.h>
+#ifdef CONFIG_MTK_TASK_TURBO
+#include "../../drivers/misc/mediatek/include/mt-plat/turbo_common.h"
+#endif
 
 #define CGROUP_FILE_NAME_MAX		(MAX_CGROUP_TYPE_NAMELEN +	\
 					 MAX_CFTYPE_NAME + 2)
@@ -2643,6 +2646,16 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
 			}
 		} while_each_subsys_mask();
 	}
+
+#ifdef CONFIG_MTK_TASK_TURBO
+	{
+		struct task_struct *turbo_task;
+		struct cgroup_subsys_state *turbo_css;
+
+		cgroup_taskset_for_each(turbo_task, turbo_css, tset)
+			cgroup_set_turbo_task(turbo_task);
+	}
+#endif
 
 	ret = 0;
 	goto out_release_tset;
@@ -6778,6 +6791,10 @@ void cgroup_post_fork(struct task_struct *child,
 	do_each_subsys_mask(ss, i, have_fork_callback) {
 		ss->fork(child);
 	} while_each_subsys_mask();
+
+#ifdef CONFIG_MTK_TASK_TURBO
+	cgroup_set_turbo_task(child);
+#endif
 
 	/* Make the new cset the root_cset of the new cgroup namespace. */
 	if (kargs->flags & CLONE_NEWCGROUP) {
