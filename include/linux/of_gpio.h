@@ -22,6 +22,17 @@ struct device_node;
 extern int of_get_named_gpio(const struct device_node *np,
 			     const char *list_name, int index);
 
+static inline int of_gpio_named_count(const struct device_node *np,
+				      const char *propname)
+{
+	return of_count_phandle_with_args(np, propname, "#gpio-cells");
+}
+
+static inline int of_gpio_count(const struct device_node *np)
+{
+	return of_gpio_named_count(np, "gpios");
+}
+
 #else /* CONFIG_OF_GPIO */
 
 #include <linux/errno.h>
@@ -29,6 +40,17 @@ extern int of_get_named_gpio(const struct device_node *np,
 /* Drivers may not strictly depend on the GPIO support, so let them link. */
 static inline int of_get_named_gpio(const struct device_node *np,
                                    const char *propname, int index)
+{
+	return -ENOSYS;
+}
+
+static inline int of_gpio_named_count(const struct device_node *np,
+				      const char *propname)
+{
+	return -ENOSYS;
+}
+
+static inline int of_gpio_count(const struct device_node *np)
 {
 	return -ENOSYS;
 }
