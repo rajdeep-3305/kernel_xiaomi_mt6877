@@ -20,6 +20,16 @@
 #include <linux/string.h>
 #include <linux/of.h>
 #include <linux/suspend.h>
+#ifdef CONFIG_MACH_MT6877
+#include <linux/power_supply.h>
+#include "../misc/mediatek/base/power/include/ppm_v3/mtk_ppm_api.h"
+#ifdef CONFIG_RUBY_MI_THERMAL_CHG
+#include <linux/hwid.h>
+#endif
+#ifdef CONFIG_MI_DISP_NOTIFIER
+#include "../gpu/drm/mediatek/mi_disp/mi_disp_notifier.h"
+#endif
+#endif
 
 #include <trace/hooks/thermal.h>
 
@@ -820,6 +830,257 @@ static void thermal_release(struct device *dev)
 }
 
 static struct class *thermal_class;
+
+#ifdef CONFIG_MACH_MT6877
+/* Ruby's stock thermal daemon and camera HAL exchange state through this
+ * device. These values are userspace-owned; they are not thermal zone data.
+ */
+struct thermal_message_int {
+	struct device_attribute attr;
+	atomic_t value;
+};
+
+static ssize_t thermal_message_int_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct thermal_message_int *item =
+		container_of(attr, struct thermal_message_int, attr);
+
+	return sysfs_emit(buf, "%d\n", atomic_read(&item->value));
+}
+
+static ssize_t thermal_message_int_store(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct thermal_message_int *item =
+		container_of(attr, struct thermal_message_int, attr);
+	int value;
+
+	if (kstrtoint(buf, 10, &value))
+		return -EINVAL;
+	atomic_set(&item->value, value);
+	return count;
+}
+
+#define THERMAL_MESSAGE_INT(_name, _initial) \
+	static struct thermal_message_int thermal_message_##_name = { \
+		.attr = __ATTR(_name, 0664, thermal_message_int_show, \
+			      thermal_message_int_store), \
+		.value = ATOMIC_INIT(_initial), \
+	}
+
+THERMAL_MESSAGE_INT(sconfig, -1);
+THERMAL_MESSAGE_INT(temp_state, 0);
+THERMAL_MESSAGE_INT(balance_mode, 0);
+THERMAL_MESSAGE_INT(charger_temp, -1);
+THERMAL_MESSAGE_INT(modem_limit, 0);
+THERMAL_MESSAGE_INT(market_download_limit, 0);
+THERMAL_MESSAGE_INT(flash_state, 0);
+
+struct thermal_message_text {
+	struct device_attribute attr;
+	char value[PAGE_SIZE];
+};
+
+static DEFINE_MUTEX(thermal_message_text_lock);
+
+static ssize_t thermal_message_text_show(struct device *dev,
+					 struct device_attribute *attr, char *buf)
+{
+	struct thermal_message_text *item =
+		container_of(attr, struct thermal_message_text, attr);
+	ssize_t count;
+
+	mutex_lock(&thermal_message_text_lock);
+	count = sysfs_emit(buf, "%s", item->value);
+	mutex_unlock(&thermal_message_text_lock);
+	return count;
+}
+
+static ssize_t thermal_message_text_store(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf, size_t count)
+{
+	struct thermal_message_text *item =
+		container_of(attr, struct thermal_message_text, attr);
+
+	if (count >= sizeof(item->value))
+		return -E2BIG;
+	mutex_lock(&thermal_message_text_lock);
+	memcpy(item->value, buf, count);
+	item->value[count] = '\0';
+	mutex_unlock(&thermal_message_text_lock);
+	return count;
+}
+
+static struct thermal_message_text thermal_message_boost = {
+	.attr = __ATTR(boost, 0664, thermal_message_text_show,
+		       thermal_message_text_store),
+};
+static struct thermal_message_text thermal_message_board_sensor_temp = {
+	.attr = __ATTR(board_sensor_temp, 0664, thermal_message_text_show,
+		       thermal_message_text_store),
+};
+
+static const char *thermal_message_board_sensor = "invalid";
+static struct device *thermal_message_dev;
+
+static ssize_t board_sensor_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%s", thermal_message_board_sensor);
+}
+static DEVICE_ATTR_RO(board_sensor);
+
+static ssize_t usb_online_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct power_supply *usb = power_supply_get_by_name("usb");
+	union power_supply_propval value;
+	int ret;
+
+	if (!usb)
+		return -ENODEV;
+	ret = power_supply_get_property(usb, POWER_SUPPLY_PROP_ONLINE, &value);
+	power_supply_put(usb);
+	if (ret)
+		return ret;
+	return sysfs_emit(buf, "%d\n", value.intval);
+}
+static DEVICE_ATTR_RO(usb_online);
+
+#ifdef CONFIG_MI_DISP_NOTIFIER
+static atomic_t thermal_message_screen_state = ATOMIC_INIT(1);
+
+static ssize_t screen_state_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%d\n",
+			 atomic_read(&thermal_message_screen_state));
+}
+static DEVICE_ATTR_RO(screen_state);
+
+static int thermal_message_display_notify(struct notifier_block *nb,
+					  unsigned long event, void *data)
+{
+	struct mi_disp_notifier *notification = data;
+	int state;
+
+	if (event != MI_DISP_DPMS_EVENT || !notification ||
+	    !notification->data)
+		return NOTIFY_DONE;
+
+	state = *(int *)notification->data;
+	atomic_set(&thermal_message_screen_state,
+		   state == MI_DISP_DPMS_ON ? 1 : 0);
+	if (thermal_message_dev)
+		sysfs_notify(&thermal_message_dev->kobj, NULL, "screen_state");
+	return NOTIFY_OK;
+}
+
+static struct notifier_block thermal_message_display_nb = {
+	.notifier_call = thermal_message_display_notify,
+};
+#endif
+
+static ssize_t cpu_limits_store(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	unsigned int cpu, max_freq;
+	int cluster;
+
+	if (sscanf(buf, "cpu%u %u", &cpu, &max_freq) != 2)
+		return -EINVAL;
+
+	cluster = cpu <= 5 ? 0 : 1;
+	mt_ppm_sysboost_set_freq_limit(BOOST_BY_XM_THERMAL, cluster, -1,
+				       max_freq);
+	return count;
+}
+static DEVICE_ATTR_WO(cpu_limits);
+
+#ifdef CONFIG_RUBY_MI_THERMAL_CHG
+static ssize_t charger_only_index_show(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%d\n", get_hw_product());
+}
+static DEVICE_ATTR_RO(charger_only_index);
+#endif
+
+int get_charge_mode(void)
+{
+	return atomic_read(&thermal_message_charger_temp.value);
+}
+EXPORT_SYMBOL(get_charge_mode);
+
+static struct attribute *thermal_message_attrs[] = {
+	&thermal_message_sconfig.attr.attr,
+	&thermal_message_boost.attr.attr,
+	&thermal_message_temp_state.attr.attr,
+	&thermal_message_balance_mode.attr.attr,
+	&thermal_message_charger_temp.attr.attr,
+	&dev_attr_usb_online.attr,
+#ifdef CONFIG_MI_DISP_NOTIFIER
+	&dev_attr_screen_state.attr,
+#endif
+	&thermal_message_modem_limit.attr.attr,
+	&thermal_message_market_download_limit.attr.attr,
+	&thermal_message_flash_state.attr.attr,
+	&dev_attr_cpu_limits.attr,
+	&dev_attr_board_sensor.attr,
+	&thermal_message_board_sensor_temp.attr.attr,
+#ifdef CONFIG_RUBY_MI_THERMAL_CHG
+	&dev_attr_charger_only_index.attr,
+#endif
+	NULL,
+};
+ATTRIBUTE_GROUPS(thermal_message);
+
+static void thermal_message_release(struct device *dev)
+{
+	kfree(dev);
+}
+
+static int __init thermal_message_register(void)
+{
+	struct device_node *np;
+	struct device *dev;
+	int ret;
+
+	np = of_find_node_by_name(NULL, "thermal-message");
+	if (!np)
+		return 0;
+	of_property_read_string(np, "board-sensor",
+				&thermal_message_board_sensor);
+	of_node_put(np);
+
+	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
+	if (!dev)
+		return -ENOMEM;
+	dev->class = thermal_class;
+	dev->groups = thermal_message_groups;
+	dev->release = thermal_message_release;
+	device_initialize(dev);
+	ret = dev_set_name(dev, "thermal_message");
+	if (!ret)
+		ret = device_add(dev);
+	if (ret)
+		put_device(dev);
+#ifdef CONFIG_MI_DISP_NOTIFIER
+	else {
+		thermal_message_dev = dev;
+		mi_disp_register_client(&thermal_message_display_nb);
+	}
+#else
+	if (!ret)
+		thermal_message_dev = dev;
+#endif
+	return ret;
+}
+#endif
 
 static inline
 void print_bind_err_msg(struct thermal_zone_device *tz,
@@ -1622,6 +1883,12 @@ static int __init thermal_init(void)
 		thermal_class = NULL;
 		goto unregister_governors;
 	}
+
+#ifdef CONFIG_MACH_MT6877
+	result = thermal_message_register();
+	if (result)
+		pr_warn("failed to register thermal_message: %d\n", result);
+#endif
 
 	result = register_pm_notifier(&thermal_pm_nb);
 	if (result)
