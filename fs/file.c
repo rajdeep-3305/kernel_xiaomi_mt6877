@@ -472,6 +472,19 @@ struct files_struct init_files = {
 	.resize_wait	= __WAIT_QUEUE_HEAD_INITIALIZER(init_files.resize_wait),
 };
 
+struct files_struct *get_files_struct(struct task_struct *task)
+{
+	struct files_struct *files;
+
+	task_lock(task);
+	files = task->files;
+	if (files)
+		atomic_inc(&files->count);
+	task_unlock(task);
+
+	return files;
+}
+
 static unsigned int find_next_fd(struct fdtable *fdt, unsigned int start)
 {
 	unsigned int maxfd = fdt->max_fds; /* always multiple of BITS_PER_LONG */
@@ -489,9 +502,9 @@ static unsigned int find_next_fd(struct fdtable *fdt, unsigned int start)
 /*
  * allocate a file descriptor, mark it busy.
  */
-static int alloc_fd(unsigned start, unsigned end, unsigned flags)
+int __alloc_fd(struct files_struct *files, unsigned int start,
+	       unsigned int end, unsigned int flags)
 {
-	struct files_struct *files = current->files;
 	unsigned int fd;
 	int error;
 	struct fdtable *fdt;
@@ -547,6 +560,11 @@ out:
 	return error;
 }
 
+static int alloc_fd(unsigned int start, unsigned int end, unsigned int flags)
+{
+	return __alloc_fd(current->files, start, end, flags);
+}
+
 int __get_unused_fd_flags(unsigned flags, unsigned long nofile)
 {
 	return alloc_fd(0, nofile, flags);
@@ -592,9 +610,9 @@ EXPORT_SYMBOL(put_unused_fd);
  * as if they had called fput(file).
  */
 
-void fd_install(unsigned int fd, struct file *file)
+void __fd_install(struct files_struct *files, unsigned int fd,
+		  struct file *file)
 {
-	struct files_struct *files = current->files;
 	struct fdtable *fdt;
 
 	if (is_dma_buf_file(file)) {
@@ -622,6 +640,11 @@ void fd_install(unsigned int fd, struct file *file)
 	BUG_ON(fdt->fd[fd] != NULL);
 	rcu_assign_pointer(fdt->fd[fd], file);
 	rcu_read_unlock_sched();
+}
+
+void fd_install(unsigned int fd, struct file *file)
+{
+	__fd_install(current->files, fd, file);
 }
 
 EXPORT_SYMBOL(fd_install);
@@ -654,9 +677,8 @@ static struct file *pick_file(struct files_struct *files, unsigned fd)
 	return file;
 }
 
-int close_fd(unsigned fd)
+int __close_fd(struct files_struct *files, unsigned int fd)
 {
-	struct files_struct *files = current->files;
 	struct file *file;
 
 	spin_lock(&files->file_lock);
@@ -666,6 +688,11 @@ int close_fd(unsigned fd)
 		return -EBADF;
 
 	return filp_close(file, files);
+}
+
+int close_fd(unsigned int fd)
+{
+	return __close_fd(current->files, fd);
 }
 EXPORT_SYMBOL_NS(close_fd, ANDROID_GKI_VFS_EXPORT_ONLY); /* for ksys_close() */
 

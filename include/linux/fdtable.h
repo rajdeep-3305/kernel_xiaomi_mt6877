@@ -117,6 +117,7 @@ struct file *task_lookup_next_fd_rcu(struct task_struct *task, unsigned int *fd)
 
 struct task_struct;
 
+struct files_struct *get_files_struct(struct task_struct *task);
 void put_files_struct(struct files_struct *fs);
 int unshare_files(void);
 struct fd_range {
@@ -129,6 +130,7 @@ int iterate_fd(struct files_struct *, unsigned,
 		const void *);
 
 extern int close_fd(unsigned int fd);
+extern int __close_fd(struct files_struct *files, unsigned int fd);
 extern int __close_range(unsigned int fd, unsigned int max_fd, unsigned int flags);
 extern struct file *close_fd_get_file(unsigned int fd);
 
