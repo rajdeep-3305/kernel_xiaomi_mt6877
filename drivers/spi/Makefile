@@ -156,3 +156,6 @@ obj-$(CONFIG_SPI_AMD)			+= spi-amd.o
 # SPI slave protocol handlers
 obj-$(CONFIG_SPI_SLAVE_TIME)		+= spi-slave-time.o
 obj-$(CONFIG_SPI_SLAVE_SYSTEM_CONTROL)	+= spi-slave-system-control.o
+
+obj-$(CONFIG_SPI_MT65XX) += spi-mt65xx-dev.o
+obj-$(CONFIG_SPI_SLAVE_MT27XX) += spi-slave-mt27xx-test.o
