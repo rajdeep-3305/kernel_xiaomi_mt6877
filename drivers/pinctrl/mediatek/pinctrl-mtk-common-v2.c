@@ -14,9 +14,25 @@
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of_irq.h>
+#include <linux/of_address.h>
 
 #include "mtk-eint.h"
 #include "pinctrl-mtk-common-v2.h"
+
+/* Some SOC provide more control register other than value register.
+ * Generally, a value register need read-modify-write is at offset 0xXXXXXXXX0.
+ * A corresponding SET register is at offset 0xXXXXXXX4. Write 1s' to some bits
+ *  of SET register will set same bits in value register.
+ * A corresponding CLR register is at offset 0xXXXXXXX8. Write 1s' to some bits
+ *  of CLR register will clr same bits in value register.
+ * For GPIO mode control, MWR register is provided at offset 0xXXXXXXXC.
+ *  With MWR, the MSBit of GPIO mode contrl is for modification-enable, not for
+ *  GPIO mode selection.
+ */
+
+#define SET_OFFSET 0x4
+#define CLR_OFFSET 0x8
+#define MWR_OFFSET 0xC
 
 /**
  * struct mtk_drive_desc - the structure that holds the information
@@ -57,37 +73,62 @@ static u32 mtk_r32(struct mtk_pinctrl *pctl, u8 i, u32 reg)
 void mtk_rmw(struct mtk_pinctrl *pctl, u8 i, u32 reg, u32 mask, u32 set)
 {
 	u32 val;
-	unsigned long flags;
-
-	spin_lock_irqsave(&pctl->lock, flags);
 
 	val = mtk_r32(pctl, i, reg);
 	val &= ~mask;
 	val |= set;
 	mtk_w32(pctl, i, reg, val);
+}
 
-	spin_unlock_irqrestore(&pctl->lock, flags);
+void mtk_hw_set_value_race_free(struct mtk_pinctrl *pctl,
+		struct mtk_pin_field *pf, u32 value)
+{
+	unsigned int set, clr;
+
+	set = value & pf->mask;
+	clr = (~set) & pf->mask;
+
+	if (set)
+		mtk_w32(pctl, pf->index, pf->offset + SET_OFFSET,
+			set << pf->bitpos);
+	if (clr)
+		mtk_w32(pctl, pf->index, pf->offset + CLR_OFFSET,
+			clr << pf->bitpos);
+}
+
+void mtk_hw_set_mode_race_free(struct mtk_pinctrl *pctl,
+		struct mtk_pin_field *pf, u32 value)
+{
+	unsigned int value_new;
+
+	/* MSB of mask is modification-enable bit, set this bit */
+	value_new = 0x8 | value;
+	if (value_new == value)
+		dev_notice(pctl->dev,
+			"invalid mode 0x%x, use it by ignoring MSBit!\n",
+			value);
+	mtk_w32(pctl, pf->index, pf->offset + MWR_OFFSET,
+		value_new << pf->bitpos);
 }
 
 static int mtk_hw_pin_field_lookup(struct mtk_pinctrl *hw,
 				   const struct mtk_pin_desc *desc,
 				   int field, struct mtk_pin_field *pfd)
 {
-	const struct mtk_pin_field_calc *c;
+	const struct mtk_pin_field_calc *c, *e;
 	const struct mtk_pin_reg_calc *rc;
 	int start = 0, end, check;
 	bool found = false;
 	u32 bits;
 
-	if (hw->soc->reg_cal && hw->soc->reg_cal[field].range) {
+	if (hw->soc->reg_cal && hw->soc->reg_cal[field].range)
 		rc = &hw->soc->reg_cal[field];
-	} else {
-		dev_dbg(hw->dev,
-			"Not support field %d for this soc\n", field);
+	else
 		return -ENOTSUPP;
-	}
 
 	end = rc->nranges - 1;
+	c = rc->range;
+	e = c + rc->nranges;
 
 	while (start <= end) {
 		check = (start + end) >> 1;
@@ -103,11 +144,8 @@ static int mtk_hw_pin_field_lookup(struct mtk_pinctrl *hw,
 			start = check + 1;
 	}
 
-	if (!found) {
-		dev_dbg(hw->dev, "Not support field %d for pin = %d (%s)\n",
-			field, desc->number, desc->name);
+	if (!found)
 		return -ENOTSUPP;
-	}
 
 	c = rc->range + check;
 
@@ -202,10 +240,16 @@ int mtk_hw_set_value(struct mtk_pinctrl *hw, const struct mtk_pin_desc *desc,
 	if (value < 0 || value > pf.mask)
 		return -EINVAL;
 
-	if (!pf.next)
-		mtk_rmw(hw, pf.index, pf.offset, pf.mask << pf.bitpos,
-			(value & pf.mask) << pf.bitpos);
-	else
+	if (!pf.next) {
+		if (hw->soc->race_free_access) {
+			if (field == PINCTRL_PIN_REG_MODE)
+				mtk_hw_set_mode_race_free(hw, &pf, value);
+			else
+				mtk_hw_set_value_race_free(hw, &pf, value);
+		} else
+			mtk_rmw(hw, pf.index, pf.offset, pf.mask << pf.bitpos,
+				(value & pf.mask) << pf.bitpos);
+	} else
 		mtk_hw_write_cross_field(hw, &pf, value);
 
 	return 0;
@@ -232,6 +276,59 @@ int mtk_hw_get_value(struct mtk_pinctrl *hw, const struct mtk_pin_desc *desc,
 }
 EXPORT_SYMBOL_GPL(mtk_hw_get_value);
 
+void mtk_eh_ctrl(struct mtk_pinctrl *hw, const struct mtk_pin_desc *desc,
+		 u16 mode)
+{
+	const struct mtk_eh_pin_pinmux *p = hw->soc->eh_pin_pinmux;
+	u32 val = 0, on = 0;
+
+	while (p->pin != 0xffff) {
+		if (desc->number == p->pin) {
+			if (mode == p->pinmux) {
+				on = 1;
+				break;
+			} else if (desc->number != (p + 1)->pin) {
+				/*
+				 * If the target mode does not match
+				 * the mode in current entry.
+				 *
+				 * Check the next entry if the pin
+				 * number is the same.
+				 * Yes: target pin have more than one
+				 *    pinmux shall enable eh. Check the
+				 *    next entry.
+				 * No: target pin do not have other
+				 *    pinmux shall enable eh. Just disable
+				 *    the EH function.
+				 */
+				break;
+			}
+		}
+		/* It is possible that one pin may have more than one pinmux
+		 *   that shall enable eh.
+		 * Besides, we assume that hw->soc->eh_pin_pinmux is sorted
+		 *   according to field 'pin'.
+		 * So when desc->number < p->pin, it mean no match will be
+		 *   found and we can leave.
+		 */
+		if (desc->number < p->pin)
+			return;
+
+		p++;
+	}
+
+	/* If pin not found, just return */
+	if (p->pin == 0xffff)
+		return;
+
+	(void)mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_DRV_EH, &val);
+	if (on)
+		val |= on;
+	else
+		val &= 0xfffffffe;
+	(void)mtk_hw_set_value(hw, desc, PINCTRL_PIN_REG_DRV_EH, val);
+}
+
 static int mtk_xt_find_eint_num(struct mtk_pinctrl *hw, unsigned long eint_n)
 {
 	const struct mtk_pin_desc *desc;
@@ -248,27 +345,18 @@ static int mtk_xt_find_eint_num(struct mtk_pinctrl *hw, unsigned long eint_n)
 	return EINT_NA;
 }
 
-/*
- * Virtual GPIO only used inside SOC and not being exported to outside SOC.
- * Some modules use virtual GPIO as eint (e.g. pmif or usb).
- * In MTK platform, external interrupt (EINT) and GPIO is 1-1 mapping
- * and we can set GPIO as eint.
- * But some modules use specific eint which doesn't have real GPIO pin.
- * So we use virtual GPIO to map it.
- */
-
 bool mtk_is_virt_gpio(struct mtk_pinctrl *hw, unsigned int gpio_n)
 {
 	const struct mtk_pin_desc *desc;
 	bool virt_gpio = false;
 
-	desc = (const struct mtk_pin_desc *)&hw->soc->pins[gpio_n];
-
-	/* if the GPIO is not supported for eint mode */
-	if (desc->eint.eint_m == NO_EINT_SUPPORT)
+	if (gpio_n >= hw->soc->npins)
 		return virt_gpio;
 
-	if (desc->funcs && !desc->funcs[desc->eint.eint_m].name)
+	desc = (const struct mtk_pin_desc *)&hw->soc->pins[gpio_n];
+
+	if (desc->funcs &&
+	    (desc->funcs[desc->eint.eint_m].name == 0))
 		virt_gpio = true;
 
 	return virt_gpio;
@@ -285,12 +373,8 @@ static int mtk_xt_get_gpio_n(void *data, unsigned long eint_n,
 	desc = (const struct mtk_pin_desc *)hw->soc->pins;
 	*gpio_chip = &hw->chip;
 
-	/*
-	 * Be greedy to guess first gpio_n is equal to eint_n.
-	 * Only eint virtual eint number is greater than gpio number.
-	 */
-	if (hw->soc->npins > eint_n &&
-	    desc[eint_n].eint.eint_n == eint_n)
+	/* Be greedy to guess first gpio_n is equal to eint_n */
+	if (desc[eint_n].eint.eint_n == eint_n)
 		*gpio_n = eint_n;
 	else
 		*gpio_n = mtk_xt_find_eint_num(hw, eint_n);
@@ -340,6 +424,8 @@ static int mtk_xt_set_gpio_as_eint(void *data, unsigned long eint_n)
 			       desc->eint.eint_m);
 	if (err)
 		return err;
+	if (hw->soc->eh_pin_pinmux)
+		mtk_eh_ctrl(hw, desc, desc->eint.eint_m);
 
 	err = mtk_hw_set_value(hw, desc, PINCTRL_PIN_REG_DIR, MTK_INPUT);
 	if (err)
@@ -364,10 +450,29 @@ static const struct mtk_eint_xt mtk_eint_xt = {
 	.set_gpio_as_eint = mtk_xt_set_gpio_as_eint,
 };
 
+static int mtk_eint_suspend(struct device *device)
+{
+	struct mtk_pinctrl *pctl = dev_get_drvdata(device);
+
+	return mtk_eint_do_suspend(pctl->eint);
+}
+
+static int mtk_eint_resume(struct device *device)
+{
+	struct mtk_pinctrl *pctl = dev_get_drvdata(device);
+
+	return mtk_eint_do_resume(pctl->eint);
+}
+
+const struct dev_pm_ops mtk_eint_pm_ops_v2 = {
+	.suspend_noirq = mtk_eint_suspend,
+	.resume_noirq = mtk_eint_resume,
+};
+
 int mtk_build_eint(struct mtk_pinctrl *hw, struct platform_device *pdev)
 {
-	struct device_node *np = pdev->dev.of_node;
-	int ret;
+	struct device_node *np = pdev->dev.of_node, *node;
+	struct resource *res;
 
 	if (!IS_ENABLED(CONFIG_EINT_MTK))
 		return 0;
@@ -379,22 +484,39 @@ int mtk_build_eint(struct mtk_pinctrl *hw, struct platform_device *pdev)
 	if (!hw->eint)
 		return -ENOMEM;
 
-	hw->eint->base = devm_platform_ioremap_resource_byname(pdev, "eint");
-	if (IS_ERR(hw->eint->base)) {
-		ret = PTR_ERR(hw->eint->base);
-		goto err_free_eint;
+	if (hw->soc->nbase_names) {
+		res = platform_get_resource_byname(pdev,
+				IORESOURCE_MEM, "eint");
+		if (!res) {
+			dev_err(&pdev->dev, "Unable to get eint resource\n");
+			return -ENODEV;
+		}
+
+		hw->eint->base = devm_ioremap_resource(&pdev->dev, res);
+	} else {
+	#if (defined CONFIG_MACH_MT6739) || (defined CONFIG_MACH_MT6771)
+		node = of_parse_phandle(np, "reg_base_eint", 0);
+	#else
+		node = of_find_node_by_name(NULL, "eint");
+	#endif /* CONFIG_MACH_MT6739 */
+		if (!node)
+			return -ENODEV;
+		hw->eint->base = of_iomap(node, 0);
+		of_node_put(node);
 	}
+
+	if (hw->eint->base == NULL)
+		return -ENOMEM;
+
+	if (IS_ERR(hw->eint->base))
+		return PTR_ERR(hw->eint->base);
 
 	hw->eint->irq = irq_of_parse_and_map(np, 0);
-	if (!hw->eint->irq) {
-		ret = -EINVAL;
-		goto err_free_eint;
-	}
+	if (!hw->eint->irq)
+		return -EINVAL;
 
-	if (!hw->soc->eint_hw) {
-		ret = -ENODEV;
-		goto err_free_eint;
-	}
+	if (!hw->soc->eint_hw)
+		return -ENODEV;
 
 	hw->eint->dev = &pdev->dev;
 	hw->eint->hw = hw->soc->eint_hw;
@@ -402,11 +524,6 @@ int mtk_build_eint(struct mtk_pinctrl *hw, struct platform_device *pdev)
 	hw->eint->gpio_xlate = &mtk_eint_xt;
 
 	return mtk_eint_do_init(hw->eint);
-
-err_free_eint:
-	devm_kfree(hw->dev, hw->eint);
-	hw->eint = NULL;
-	return ret;
 }
 EXPORT_SYMBOL_GPL(mtk_build_eint);
 
@@ -497,8 +614,14 @@ EXPORT_SYMBOL_GPL(mtk_pinconf_bias_get);
 int mtk_pinconf_bias_disable_set_rev1(struct mtk_pinctrl *hw,
 				      const struct mtk_pin_desc *desc)
 {
-	return mtk_hw_set_value(hw, desc, PINCTRL_PIN_REG_PULLEN,
-				MTK_DISABLE);
+	int err;
+
+	err = mtk_hw_set_value(hw, desc, PINCTRL_PIN_REG_PULLEN,
+			       MTK_DISABLE);
+	if (err)
+		return err;
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(mtk_pinconf_bias_disable_set_rev1);
 
@@ -626,7 +749,7 @@ out:
 	return err;
 }
 
-static int mtk_pinconf_bias_set_pupd_r1_r0(struct mtk_pinctrl *hw,
+int mtk_pinconf_bias_set_pupd_r1_r0(struct mtk_pinctrl *hw,
 				const struct mtk_pin_desc *desc,
 				u32 pullup, u32 arg)
 {
@@ -664,189 +787,7 @@ static int mtk_pinconf_bias_set_pupd_r1_r0(struct mtk_pinctrl *hw,
 out:
 	return err;
 }
-
-static int mtk_hw_pin_rsel_lookup(struct mtk_pinctrl *hw,
-				  const struct mtk_pin_desc *desc,
-				  u32 pullup, u32 arg, u32 *rsel_val)
-{
-	const struct mtk_pin_rsel *rsel;
-	int check;
-	bool found = false;
-
-	rsel = hw->soc->pin_rsel;
-
-	for (check = 0; check <= hw->soc->npin_rsel - 1; check++) {
-		if (desc->number >= rsel[check].s_pin &&
-		    desc->number <= rsel[check].e_pin) {
-			if (pullup) {
-				if (rsel[check].up_rsel == arg) {
-					found = true;
-					*rsel_val = rsel[check].rsel_index;
-					break;
-				}
-			} else {
-				if (rsel[check].down_rsel == arg) {
-					found = true;
-					*rsel_val = rsel[check].rsel_index;
-					break;
-				}
-			}
-		}
-	}
-
-	if (!found) {
-		dev_err(hw->dev, "Not support rsel value %d Ohm for pin = %d (%s)\n",
-			arg, desc->number, desc->name);
-		return -ENOTSUPP;
-	}
-
-	return 0;
-}
-
-static int mtk_pinconf_bias_set_rsel(struct mtk_pinctrl *hw,
-				     const struct mtk_pin_desc *desc,
-				     u32 pullup, u32 arg)
-{
-	int err, rsel_val;
-
-	if (hw->rsel_si_unit) {
-		/* find pin rsel_index from pin_rsel array*/
-		err = mtk_hw_pin_rsel_lookup(hw, desc, pullup, arg, &rsel_val);
-		if (err)
-			return err;
-	} else {
-		if (arg < MTK_PULL_SET_RSEL_000 || arg > MTK_PULL_SET_RSEL_111)
-			return -EINVAL;
-
-		rsel_val = arg - MTK_PULL_SET_RSEL_000;
-	}
-
-	return mtk_hw_set_value(hw, desc, PINCTRL_PIN_REG_RSEL, rsel_val);
-}
-
-static int mtk_pinconf_bias_set_pu_pd_rsel(struct mtk_pinctrl *hw,
-					   const struct mtk_pin_desc *desc,
-					   u32 pullup, u32 arg)
-{
-	u32 enable = arg == MTK_DISABLE ? MTK_DISABLE : MTK_ENABLE;
-	int err;
-
-	if (arg != MTK_DISABLE) {
-		err = mtk_pinconf_bias_set_rsel(hw, desc, pullup, arg);
-		if (err)
-			return err;
-	}
-
-	return mtk_pinconf_bias_set_pu_pd(hw, desc, pullup, enable);
-}
-
-int mtk_pinconf_bias_set_combo(struct mtk_pinctrl *hw,
-			       const struct mtk_pin_desc *desc,
-			       u32 pullup, u32 arg)
-{
-	int err = -ENOTSUPP;
-	u32 try_all_type;
-
-	if (hw->soc->pull_type)
-		try_all_type = hw->soc->pull_type[desc->number];
-	else
-		try_all_type = MTK_PULL_TYPE_MASK;
-
-	if (try_all_type & MTK_PULL_RSEL_TYPE) {
-		err = mtk_pinconf_bias_set_pu_pd_rsel(hw, desc, pullup, arg);
-		if (!err)
-			return 0;
-	}
-
-	if (try_all_type & MTK_PULL_PU_PD_TYPE) {
-		err = mtk_pinconf_bias_set_pu_pd(hw, desc, pullup, arg);
-		if (!err)
-			return 0;
-	}
-
-	if (try_all_type & MTK_PULL_PULLSEL_TYPE) {
-		err = mtk_pinconf_bias_set_pullsel_pullen(hw, desc,
-							  pullup, arg);
-		if (!err)
-			return 0;
-	}
-
-	if (try_all_type & MTK_PULL_PUPD_R1R0_TYPE)
-		err = mtk_pinconf_bias_set_pupd_r1_r0(hw, desc, pullup, arg);
-
-	if (err)
-		dev_err(hw->dev, "Invalid pull argument\n");
-
-	return err;
-}
-EXPORT_SYMBOL_GPL(mtk_pinconf_bias_set_combo);
-
-static int mtk_rsel_get_si_unit(struct mtk_pinctrl *hw,
-				const struct mtk_pin_desc *desc,
-				u32 pullup, u32 rsel_val, u32 *si_unit)
-{
-	const struct mtk_pin_rsel *rsel;
-	int check;
-
-	rsel = hw->soc->pin_rsel;
-
-	for (check = 0; check <= hw->soc->npin_rsel - 1; check++) {
-		if (desc->number >= rsel[check].s_pin &&
-		    desc->number <= rsel[check].e_pin) {
-			if (rsel_val == rsel[check].rsel_index) {
-				if (pullup)
-					*si_unit = rsel[check].up_rsel;
-				else
-					*si_unit = rsel[check].down_rsel;
-				break;
-			}
-		}
-	}
-
-	return 0;
-}
-
-static int mtk_pinconf_bias_get_pu_pd_rsel(struct mtk_pinctrl *hw,
-					   const struct mtk_pin_desc *desc,
-					   u32 *pullup, u32 *enable)
-{
-	int pu, pd, rsel, err;
-
-	err = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_RSEL, &rsel);
-	if (err)
-		goto out;
-
-	err = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_PU, &pu);
-	if (err)
-		goto out;
-
-	err = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_PD, &pd);
-	if (err)
-		goto out;
-
-	if (pu == 0 && pd == 0) {
-		*pullup = 0;
-		*enable = MTK_DISABLE;
-	} else if (pu == 1 && pd == 0) {
-		*pullup = 1;
-		if (hw->rsel_si_unit)
-			mtk_rsel_get_si_unit(hw, desc, *pullup, rsel, enable);
-		else
-			*enable = rsel + MTK_PULL_SET_RSEL_000;
-	} else if (pu == 0 && pd == 1) {
-		*pullup = 0;
-		if (hw->rsel_si_unit)
-			mtk_rsel_get_si_unit(hw, desc, *pullup, rsel, enable);
-		else
-			*enable = rsel + MTK_PULL_SET_RSEL_000;
-	} else {
-		err = -EINVAL;
-		goto out;
-	}
-
-out:
-	return err;
-}
+EXPORT_SYMBOL_GPL(mtk_pinconf_bias_set_pupd_r1_r0);
 
 static int mtk_pinconf_bias_get_pu_pd(struct mtk_pinctrl *hw,
 				const struct mtk_pin_desc *desc,
@@ -903,6 +844,7 @@ static int mtk_pinconf_bias_get_pupd_r1_r0(struct mtk_pinctrl *hw,
 	err = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_PUPD, pullup);
 	if (err)
 		goto out;
+
 	/* MTK HW PUPD bit: 1 for pull-down, 0 for pull-up */
 	*pullup = !(*pullup);
 
@@ -929,40 +871,44 @@ out:
 	return err;
 }
 
+int mtk_pinconf_bias_set_combo(struct mtk_pinctrl *hw,
+				const struct mtk_pin_desc *desc,
+				u32 pullup, u32 arg)
+{
+	int err;
+
+	err = mtk_pinconf_bias_set_pu_pd(hw, desc, pullup, arg);
+	if (!err)
+		goto out;
+
+	err = mtk_pinconf_bias_set_pullsel_pullen(hw, desc, pullup, arg);
+	if (!err)
+		goto out;
+
+	err = mtk_pinconf_bias_set_pupd_r1_r0(hw, desc, pullup, arg);
+
+out:
+	return err;
+}
+EXPORT_SYMBOL_GPL(mtk_pinconf_bias_set_combo);
+
 int mtk_pinconf_bias_get_combo(struct mtk_pinctrl *hw,
 			      const struct mtk_pin_desc *desc,
 			      u32 *pullup, u32 *enable)
 {
-	int err = -ENOTSUPP;
-	u32 try_all_type;
+	int err;
 
-	if (hw->soc->pull_type)
-		try_all_type = hw->soc->pull_type[desc->number];
-	else
-		try_all_type = MTK_PULL_TYPE_MASK;
+	err = mtk_pinconf_bias_get_pu_pd(hw, desc, pullup, enable);
+	if (!err)
+		goto out;
 
-	if (try_all_type & MTK_PULL_RSEL_TYPE) {
-		err = mtk_pinconf_bias_get_pu_pd_rsel(hw, desc, pullup, enable);
-		if (!err)
-			return 0;
-	}
+	err = mtk_pinconf_bias_get_pullsel_pullen(hw, desc, pullup, enable);
+	if (!err)
+		goto out;
 
-	if (try_all_type & MTK_PULL_PU_PD_TYPE) {
-		err = mtk_pinconf_bias_get_pu_pd(hw, desc, pullup, enable);
-		if (!err)
-			return 0;
-	}
+	err = mtk_pinconf_bias_get_pupd_r1_r0(hw, desc, pullup, enable);
 
-	if (try_all_type & MTK_PULL_PULLSEL_TYPE) {
-		err = mtk_pinconf_bias_get_pullsel_pullen(hw, desc,
-							  pullup, enable);
-		if (!err)
-			return 0;
-	}
-
-	if (try_all_type & MTK_PULL_PUPD_R1R0_TYPE)
-		err = mtk_pinconf_bias_get_pupd_r1_r0(hw, desc, pullup, enable);
-
+out:
 	return err;
 }
 EXPORT_SYMBOL_GPL(mtk_pinconf_bias_get_combo);
@@ -1109,9 +1055,7 @@ int mtk_pinconf_adv_pull_set(struct mtk_pinctrl *hw,
 			if (err)
 				return err;
 		} else {
-			err = mtk_pinconf_bias_set_rev1(hw, desc, pullup);
-			if (err)
-				err = mtk_pinconf_bias_set(hw, desc, pullup);
+			return -ENOTSUPP;
 		}
 	}
 
@@ -1170,6 +1114,14 @@ int mtk_pinconf_adv_drive_set(struct mtk_pinctrl *hw,
 	int e0 = !!(arg & 2);
 	int e1 = !!(arg & 4);
 
+	/*
+	 * Only one will be exist EH table or EN,E0,E1 table
+	 * Check EH table first
+	 */
+	err = mtk_hw_set_value(hw, desc, PINCTRL_PIN_REG_DRV_EH, arg);
+	if (!err)
+		return 0;
+
 	err = mtk_hw_set_value(hw, desc, PINCTRL_PIN_REG_DRV_EN, en);
 	if (err)
 		return err;
@@ -1195,6 +1147,14 @@ int mtk_pinconf_adv_drive_get(struct mtk_pinctrl *hw,
 	u32 en, e0, e1;
 	int err;
 
+	/*
+	 * Only one will be exist EH table or EN,E0,E1 table
+	 * Check EH table first
+	 */
+	err = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_DRV_EH, val);
+	if (!err)
+		return 0;
+
 	err = mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_DRV_EN, &en);
 	if (err)
 		return err;
@@ -1213,20 +1173,5 @@ int mtk_pinconf_adv_drive_get(struct mtk_pinctrl *hw,
 }
 EXPORT_SYMBOL_GPL(mtk_pinconf_adv_drive_get);
 
-int mtk_pinconf_adv_drive_set_raw(struct mtk_pinctrl *hw,
-				  const struct mtk_pin_desc *desc, u32 arg)
-{
-	return mtk_hw_set_value(hw, desc, PINCTRL_PIN_REG_DRV_ADV, arg);
-}
-EXPORT_SYMBOL_GPL(mtk_pinconf_adv_drive_set_raw);
-
-int mtk_pinconf_adv_drive_get_raw(struct mtk_pinctrl *hw,
-				  const struct mtk_pin_desc *desc, u32 *val)
-{
-	return mtk_hw_get_value(hw, desc, PINCTRL_PIN_REG_DRV_ADV, val);
-}
-EXPORT_SYMBOL_GPL(mtk_pinconf_adv_drive_get_raw);
-
 MODULE_LICENSE("GPL v2");
-MODULE_AUTHOR("Sean Wang <sean.wang@mediatek.com>");
-MODULE_DESCRIPTION("Pin configuration library module for mediatek SoCs");
+MODULE_DESCRIPTION("MediaTek Pinctrl Common Driver V2");
