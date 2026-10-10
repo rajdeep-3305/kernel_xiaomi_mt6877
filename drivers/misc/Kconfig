@@ -597,3 +597,44 @@ source "drivers/misc/uacce/Kconfig"
 source "drivers/misc/pvpanic/Kconfig"
 source "drivers/misc/mchp_pci1xxxx/Kconfig"
 endmenu
+
+config SIMTRAY_STATUS
+	tristate "Xiaomi SIM tray status"
+	default n
+	help
+	  Say Y here to support SIM tray GPIO detection.
+
+config MTK_POWER_THROTTLING_COMMON
+	bool "MTK power throttling common"
+	help
+	  Enable common MediaTek power throttling interfaces.
+
+config MTK_BATTERY_OC_POWER_THROTTLING
+	tristate "MTK battery over current throttle"
+	select MTK_POWER_THROTTLING_COMMON
+	help
+	  Enable battery over-current based power throttling.
+
+config MTK_LOW_BATTERY_POWER_THROTTLING
+	tristate "MTK low battery throttle"
+	select MTK_POWER_THROTTLING_COMMON
+	select PMIC_LBAT_SERVICE
+	help
+	  Enable low-battery voltage based power throttling.
+
+config MTK_PBM
+	bool "MTK power budget management"
+	help
+	  Enable MediaTek power budget management.
+
+config MTK_PQ_COLOR_MODE
+	string "MTK PQ color mode"
+	default "DISP"
+	help
+	  Select DISP, MDP, DISP_MDP, or OFF for MediaTek PQ color path.
+
+source "drivers/misc/hwid/Kconfig"
+source "drivers/misc/mediatek/Kconfig"
+
+source "drivers/misc/mediatek/pmic/mt6360/Kconfig"
+
