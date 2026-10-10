@@ -25,6 +25,11 @@
 #include <ufs/ufs.h>
 #include <ufs/ufs_quirks.h>
 #include <ufs/ufshci.h>
+#include <ufs/ufstw.h>
+
+#ifdef CONFIG_SCSI_SKHPB
+#include <ufs/ufshpb_skh.h>
+#endif
 #include <linux/android_kabi.h>
 #include <linux/android_vendor.h>
 
@@ -204,6 +209,11 @@ struct ufshcd_lrb {
 
 	bool req_abort_skip;
 
+#ifdef CONFIG_SCSI_UFS_HPB
+	/* Host Performance Booster context carried in the SCSI CDB. */
+	int hpb_ctx_id;
+#endif
+
 	ANDROID_KABI_RESERVE(1);
 };
 
@@ -341,6 +351,7 @@ struct ufs_pwr_mode_info {
  * @op_runtime_config: called to config Operation and runtime regs Pointers
  * @get_outstanding_cqs: called to get outstanding completion queues
  * @config_esi: called to config Event Specific Interrupt
+ * @ioctl: handle a variant-specific userspace SCSI ioctl
  */
 struct ufs_hba_variant_ops {
 	const char *name;
@@ -387,6 +398,8 @@ struct ufs_hba_variant_ops {
 				       unsigned long *ocqs);
 	int	(*config_esi)(struct ufs_hba *hba);
 	void	(*config_scsi_dev)(struct scsi_device *sdev);
+	int	(*ioctl)(struct ufs_hba *hba, unsigned int cmd,
+			 void __user *buffer);
 };
 
 /* clock gating state  */
@@ -812,6 +825,25 @@ struct ufs_hba_monitor {
 	bool enabled;
 };
 
+#ifdef CONFIG_SCSI_UFS_HPB
+/**
+ * struct ufshpb_dev_info - UFS HPB device information.
+ *
+ * The values are populated from the device and geometry descriptors before
+ * logical units are initialized.
+ */
+struct ufshpb_dev_info {
+	int num_lu;
+	int rgn_size;
+	int srgn_size;
+	atomic_t slave_conf_cnt;
+	bool hpb_disabled;
+	u8 max_hpb_single_cmd;
+	bool is_legacy;
+	u8 control_mode;
+};
+#endif
+
 /**
  * struct ufshcd_res_info_t - MCQ related resource regions
  *
@@ -1111,6 +1143,30 @@ struct ufs_hba {
 	struct delayed_work rpm_dev_flush_recheck_work;
 
 	struct ufs_hba_monitor	monitor;
+
+#ifdef CONFIG_SCSI_UFS_HPB
+	struct ufshpb_dev_info ufshpb_dev;
+#endif
+
+#ifdef CONFIG_SCSI_UFS_TW
+	struct ufstw_info ufstw;
+#endif
+
+#ifdef CONFIG_SCSI_SKHPB
+	/* SK hynix's vendor HPB uses a private map protocol. */
+	u32 skhpb_feat;
+	int skhpb_state;
+	u32 skhpb_max_regions;
+	u32 skhpb_quirk;
+	u8 hpb_control_mode;
+	bool issue_ioctl;
+	bool skhpb_initialized;
+	struct delayed_work skhpb_init_work;
+	struct work_struct skhpb_eh_work;
+	u8 skhpb_quicklist_lu_enable[SKHPB_MAX_GENERAL_LUN];
+	struct scsi_device *sdev_ufs_lu[SKHPB_MAX_GENERAL_LUN];
+	struct skhpb_lu *skhpb_lup[SKHPB_MAX_GENERAL_LUN];
+#endif
 
 #ifdef CONFIG_SCSI_UFS_CRYPTO
 	union ufs_crypto_capabilities crypto_capabilities;
