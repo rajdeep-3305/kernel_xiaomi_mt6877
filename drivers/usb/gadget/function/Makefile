@@ -5,6 +5,7 @@
 
 ccflags-y			:= -I$(srctree)/drivers/usb/gadget/
 ccflags-y			+= -I$(srctree)/drivers/usb/gadget/udc/
+ccflags-y			+= -I$(srctree)/drivers/misc/mediatek/usb_boost/
 
 # USB Functions
 usb_f_acm-y			:= f_acm.o
@@ -59,3 +60,7 @@ usb_f_tcm-y			:= f_tcm.o
 obj-$(CONFIG_USB_F_TCM)		+= usb_f_tcm.o
 usb_f_acc-y			:= android_f_accessory.o
 obj-$(CONFIG_ANDROID_USB_F_ACC)	+= usb_f_acc.o
+usb_f_mtp-y			:= f_mtp.o
+obj-$(CONFIG_ANDROID_USB_CONFIGFS_UEVENT)	+= usb_f_mtp.o
+usb_f_ptp-y			:= f_ptp.o
+obj-$(CONFIG_ANDROID_USB_CONFIGFS_UEVENT)	+= usb_f_ptp.o
