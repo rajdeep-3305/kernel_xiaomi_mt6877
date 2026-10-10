@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2021 MediaTek Inc.
+ * Copyright (c) 2019 MediaTek Inc.
  */
 
 #ifndef __LINUX_REGULATOR_MT6359_H
@@ -17,7 +17,6 @@ enum {
 	MT6359_ID_VPROC2,
 	MT6359_ID_VPROC1,
 	MT6359_ID_VCORE_SSHUB,
-	MT6359_ID_VGPU11_SSHUB = MT6359_ID_VCORE_SSHUB,
 	MT6359_ID_VAUD18 = 10,
 	MT6359_ID_VSIM1,
 	MT6359_ID_VIBR,
