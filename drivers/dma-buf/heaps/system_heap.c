@@ -11,22 +11,42 @@
  */
 
 #include <linux/dma-buf.h>
+#include <linux/dma-map-ops.h>
 #include <linux/dma-mapping.h>
 #include <linux/dma-heap.h>
 #include <linux/err.h>
 #include <linux/highmem.h>
+#include <linux/iommu.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/mtk_dma_heap.h>
+#include <linux/pm_runtime.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
 static struct dma_heap *sys_heap;
 static struct dma_heap *sys_uncached_heap;
+static struct dma_heap *mtk_mm_heap;
+static struct dma_heap *mtk_mm_uncached_heap;
+static const struct dma_buf_ops system_heap_buf_ops;
+
+struct system_heap_iova_mapping {
+	struct list_head list;
+	struct device *dev;
+	struct iommu_domain *domain;
+	const struct dma_map_ops *dma_ops;
+	struct sg_table *table;
+	dma_addr_t iova;
+	size_t mapped_len;
+	unsigned long attrs;
+	bool coherent;
+};
 
 struct system_heap_buffer {
 	struct dma_heap *heap;
 	struct list_head attachments;
+	struct list_head iova_mappings;
 	struct mutex lock;
 	unsigned long len;
 	struct sg_table sg_table;
@@ -34,11 +54,13 @@ struct system_heap_buffer {
 	void *vaddr;
 
 	bool uncached;
+	bool legacy_manual_sync;
 };
 
 struct dma_heap_attachment {
 	struct device *dev;
 	struct sg_table *table;
+	struct system_heap_iova_mapping *iova_mapping;
 	struct list_head list;
 	bool mapped;
 
@@ -91,6 +113,293 @@ static struct sg_table *dup_sg_table(struct sg_table *table)
 	return new_table;
 }
 
+static struct iommu_domain *
+system_heap_mapping_domain(struct system_heap_buffer *buffer, struct device *dev)
+{
+	struct iommu_domain *domain;
+
+	if (buffer->heap != mtk_mm_heap && buffer->heap != mtk_mm_uncached_heap)
+		return NULL;
+	domain = iommu_get_domain_for_dev(dev);
+	return domain && iommu_is_dma_domain(domain) ? domain : NULL;
+}
+
+/* A shared IOVA must also satisfy the importing device's DMA constraints. */
+static bool system_heap_iova_compatible(struct system_heap_iova_mapping *mapping,
+				       struct device *dev)
+{
+	u64 limit = min_not_zero(dma_get_mask(dev), dev->bus_dma_limit);
+	unsigned long boundary = dma_get_seg_boundary(dev);
+	struct scatterlist *sg;
+	unsigned int i;
+
+	if (mapping->iova > limit ||
+	    mapping->mapped_len - 1 > limit - mapping->iova)
+		return false;
+	for_each_sgtable_dma_sg(mapping->table, sg, i) {
+		dma_addr_t start = sg_dma_address(sg);
+		dma_addr_t end = start + sg_dma_len(sg) - 1;
+
+		if (sg_dma_is_swiotlb(sg) || sg_dma_is_bus_address(sg) ||
+		    sg_dma_len(sg) > dma_get_max_seg_size(dev) ||
+		    (start & ~boundary) != (end & ~boundary))
+			return false;
+	}
+	return true;
+}
+
+static struct system_heap_iova_mapping *
+system_heap_find_iova_mapping(struct system_heap_buffer *buffer,
+			     struct device *dev, unsigned long attrs)
+{
+	struct iommu_domain *domain = system_heap_mapping_domain(buffer, dev);
+	struct system_heap_iova_mapping *mapping;
+
+	list_for_each_entry(mapping, &buffer->iova_mappings, list) {
+		if ((mapping->attrs ^ attrs) & ~DMA_ATTR_SKIP_CPU_SYNC)
+			continue;
+		if (!domain) {
+			if (mapping->dev == dev)
+				return mapping;
+			continue;
+		}
+		if (mapping->domain == domain &&
+		    mapping->dma_ops == get_dma_ops(dev) &&
+		    mapping->coherent == dev_is_dma_coherent(dev) &&
+		    system_heap_iova_compatible(mapping, dev))
+			return mapping;
+	}
+	return NULL;
+}
+
+static void
+system_heap_free_iova_mapping(struct system_heap_iova_mapping *mapping)
+{
+	dma_unmap_sgtable(mapping->dev, mapping->table, DMA_BIDIRECTIONAL,
+			  mapping->attrs);
+	if (!mapping->domain)
+		pm_runtime_put_sync_suspend(mapping->dev);
+	put_device(mapping->dev);
+	sg_free_table(mapping->table);
+	kfree(mapping->table);
+	kfree(mapping);
+}
+
+static int system_heap_create_iova_mapping(struct system_heap_buffer *buffer,
+					   struct device *dev,
+					   unsigned long attrs,
+					   struct system_heap_iova_mapping **out)
+{
+	struct system_heap_iova_mapping *mapping;
+	struct scatterlist *sg;
+	dma_addr_t base, expected;
+	size_t total = 0;
+	unsigned int i;
+	int ret;
+
+	mapping = kzalloc(sizeof(*mapping), GFP_KERNEL);
+	if (!mapping)
+		return -ENOMEM;
+
+	mapping->table = dup_sg_table(&buffer->sg_table);
+	if (IS_ERR(mapping->table)) {
+		ret = PTR_ERR(mapping->table);
+		mapping->table = NULL;
+		goto err_free;
+	}
+	mapping->domain = system_heap_mapping_domain(buffer, dev);
+	mapping->dma_ops = get_dma_ops(dev);
+	mapping->coherent = dev_is_dma_coherent(dev);
+	mapping->attrs = attrs;
+	if (buffer->uncached || mapping->domain)
+		mapping->attrs |= DMA_ATTR_SKIP_CPU_SYNC;
+
+	/*
+	 * MTK DMA domains retain their software page tables while powered
+	 * down, and their TLB callbacks handle inactive hardware. Leave power
+	 * ownership with the importer instead of pinning its larb awake for
+	 * the buffer's life, including importers without runtime PM enabled.
+	 */
+	if (!mapping->domain) {
+		ret = pm_runtime_resume_and_get(dev);
+		if (ret < 0)
+			goto err_table;
+	}
+
+	ret = dma_map_sgtable(dev, mapping->table, DMA_BIDIRECTIONAL,
+			      mapping->attrs);
+	if (ret)
+		goto err_pm;
+
+	base = sg_dma_address(mapping->table->sgl);
+	for_each_sgtable_dma_sg(mapping->table, sg, i) {
+		expected = base + total;
+		if (expected < base || sg_dma_address(sg) != expected) {
+			ret = -ERANGE;
+			goto err_unmap;
+		}
+		if (sg_dma_len(sg) > SIZE_MAX - total) {
+			ret = -EOVERFLOW;
+			goto err_unmap;
+		}
+		total += sg_dma_len(sg);
+	}
+	if (!total || total < buffer->len) {
+		ret = -ERANGE;
+		goto err_unmap;
+	}
+
+	mapping->dev = get_device(dev);
+	mapping->iova = base;
+	mapping->mapped_len = total;
+	if (mapping->domain && !system_heap_iova_compatible(mapping, dev)) {
+		put_device(mapping->dev);
+		ret = -ERANGE;
+		goto err_unmap;
+	}
+	*out = mapping;
+	return 0;
+
+err_unmap:
+	dma_unmap_sgtable(dev, mapping->table, DMA_BIDIRECTIONAL,
+			  mapping->attrs);
+err_pm:
+	if (!mapping->domain)
+		pm_runtime_put_sync_suspend(dev);
+err_table:
+	sg_free_table(mapping->table);
+	kfree(mapping->table);
+err_free:
+	kfree(mapping);
+	return ret;
+}
+
+/* Caller holds buffer->lock; attachment and legacy ION users share this cache. */
+static int system_heap_get_iova_mapping(struct system_heap_buffer *buffer,
+				       struct device *dev, unsigned long attrs,
+				       struct system_heap_iova_mapping **out,
+				       bool *created)
+{
+	struct system_heap_iova_mapping *mapping;
+	int ret;
+
+	*created = false;
+	mapping = system_heap_find_iova_mapping(buffer, dev, attrs);
+	if (!mapping) {
+		ret = system_heap_create_iova_mapping(buffer, dev, attrs, &mapping);
+		if (ret)
+			return ret;
+		list_add_tail(&mapping->list, &buffer->iova_mappings);
+		*created = true;
+	}
+	*out = mapping;
+	return 0;
+}
+
+bool mtk_dma_heap_is_system_heap(struct dma_buf *dmabuf)
+{
+	return dmabuf && dmabuf->ops == &system_heap_buf_ops;
+}
+EXPORT_SYMBOL_GPL(mtk_dma_heap_is_system_heap);
+
+/* Called only by the legacy allocator, before publishing a new buffer. */
+int mtk_dma_heap_set_legacy_manual_sync(struct dma_buf *dmabuf)
+{
+	struct system_heap_buffer *buffer;
+	struct device *dev;
+	int ret = 0;
+
+	if (!mtk_dma_heap_is_system_heap(dmabuf))
+		return -EXDEV;
+	buffer = dmabuf->priv;
+	if (buffer->heap != mtk_mm_heap || buffer->uncached)
+		return -EINVAL;
+
+	mutex_lock(&buffer->lock);
+	if (!list_empty(&buffer->attachments) ||
+	    !list_empty(&buffer->iova_mappings) || buffer->vmap_cnt) {
+		ret = -EBUSY;
+		goto out_unlock;
+	}
+	if (buffer->legacy_manual_sync)
+		goto out_unlock;
+
+	/* Publish the allocator's CPU-written zeroes before skipping map sync. */
+	dev = dma_heap_get_dev(buffer->heap);
+	ret = dma_map_sgtable(dev, &buffer->sg_table, DMA_BIDIRECTIONAL, 0);
+	if (ret)
+		goto out_unlock;
+	dma_unmap_sgtable(dev, &buffer->sg_table, DMA_BIDIRECTIONAL, 0);
+	buffer->legacy_manual_sync = true;
+out_unlock:
+	mutex_unlock(&buffer->lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(mtk_dma_heap_set_legacy_manual_sync);
+
+int mtk_dma_heap_get_iova(struct dma_buf *dmabuf, struct device *dev,
+			  dma_addr_t *iova, size_t *mapped_len)
+{
+	struct system_heap_iova_mapping *mapping;
+	struct system_heap_buffer *buffer;
+	bool created;
+	int ret = 0;
+
+	if (!dmabuf || !dev || !iova || !mapped_len)
+		return -EINVAL;
+	if (dmabuf->ops != &system_heap_buf_ops)
+		return -EXDEV;
+
+	buffer = dmabuf->priv;
+	mutex_lock(&buffer->lock);
+	ret = system_heap_get_iova_mapping(buffer, dev, 0, &mapping, &created);
+	if (ret)
+		goto out_unlock;
+
+	if (created && mapping->domain && !buffer->uncached &&
+	    !buffer->legacy_manual_sync)
+		dma_sync_sgtable_for_device(dev, mapping->table, DMA_BIDIRECTIONAL);
+	*iova = mapping->iova;
+	*mapped_len = mapping->mapped_len;
+out_unlock:
+	mutex_unlock(&buffer->lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(mtk_dma_heap_get_iova);
+
+/* Legacy manual-sync ION imports retain device ownership across MDP jobs. */
+int mtk_dma_heap_sync_iova(struct dma_buf *dmabuf, struct device *dev,
+			   bool for_cpu)
+{
+	struct system_heap_iova_mapping *mapping;
+	struct system_heap_buffer *buffer;
+	int ret = -ENOENT;
+
+	if (!dmabuf || !dev)
+		return -EINVAL;
+	if (dmabuf->ops != &system_heap_buf_ops)
+		return -EXDEV;
+
+	buffer = dmabuf->priv;
+	mutex_lock(&buffer->lock);
+	mapping = system_heap_find_iova_mapping(buffer, dev, 0);
+	if (mapping) {
+		if (!buffer->uncached &&
+		    !(buffer->legacy_manual_sync && mapping->domain)) {
+			if (for_cpu)
+				dma_sync_sgtable_for_cpu(dev, mapping->table,
+							 DMA_BIDIRECTIONAL);
+			else
+				dma_sync_sgtable_for_device(dev, mapping->table,
+							    DMA_BIDIRECTIONAL);
+		}
+		ret = 0;
+	}
+	mutex_unlock(&buffer->lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(mtk_dma_heap_sync_iova);
+
 static int system_heap_attach(struct dma_buf *dmabuf,
 			      struct dma_buf_attachment *attachment)
 {
@@ -140,33 +449,90 @@ static void system_heap_detach(struct dma_buf *dmabuf,
 static struct sg_table *system_heap_map_dma_buf(struct dma_buf_attachment *attachment,
 						enum dma_data_direction direction)
 {
+	struct system_heap_buffer *buffer = attachment->dmabuf->priv;
 	struct dma_heap_attachment *a = attachment->priv;
 	struct sg_table *table = a->table;
-	int attr = attachment->dma_map_attrs;
+	struct system_heap_iova_mapping *mapping;
+	struct scatterlist *sg, *mapped_sg;
+	unsigned long attr = attachment->dma_map_attrs;
+	bool created;
+	unsigned int i;
 	int ret;
 
 	if (a->uncached)
 		attr |= DMA_ATTR_SKIP_CPU_SYNC;
 
+	mutex_lock(&buffer->lock);
+	if (system_heap_mapping_domain(buffer, attachment->dev)) {
+		ret = system_heap_get_iova_mapping(buffer, attachment->dev, attr,
+						   &mapping, &created);
+		if (ret && ret != -ERANGE)
+			goto out_unlock;
+		if (!ret) {
+			/* Keep attachment tables private, including their DMA metadata. */
+			mapped_sg = mapping->table->sgl;
+			for_each_sgtable_sg(table, sg, i) {
+				sg_dma_address(sg) = sg_dma_address(mapped_sg);
+				sg_dma_len(sg) = sg_dma_len(mapped_sg);
+				mapped_sg = sg_next(mapped_sg);
+			}
+			table->nents = mapping->table->nents;
+			a->iova_mapping = mapping;
+			a->mapped = true;
+			if (!(attr & DMA_ATTR_SKIP_CPU_SYNC) &&
+			    !buffer->legacy_manual_sync)
+				dma_sync_sgtable_for_device(attachment->dev, table,
+							    direction);
+			goto out_unlock;
+		}
+	}
+	a->iova_mapping = NULL;
 	ret = dma_map_sgtable(attachment->dev, table, direction, attr);
-	if (ret)
-		return ERR_PTR(ret);
-
-	a->mapped = true;
-	return table;
+	if (!ret)
+		a->mapped = true;
+out_unlock:
+	mutex_unlock(&buffer->lock);
+	return ret ? ERR_PTR(ret) : table;
 }
 
 static void system_heap_unmap_dma_buf(struct dma_buf_attachment *attachment,
 				      struct sg_table *table,
 				      enum dma_data_direction direction)
 {
+	struct system_heap_buffer *buffer = attachment->dmabuf->priv;
 	struct dma_heap_attachment *a = attachment->priv;
-	int attr = attachment->dma_map_attrs;
+	unsigned long attr = attachment->dma_map_attrs;
 
 	if (a->uncached)
 		attr |= DMA_ATTR_SKIP_CPU_SYNC;
+	mutex_lock(&buffer->lock);
 	a->mapped = false;
-	dma_unmap_sgtable(attachment->dev, table, direction, attr);
+	if (a->iova_mapping) {
+		if (!(attr & DMA_ATTR_SKIP_CPU_SYNC) &&
+		    !buffer->legacy_manual_sync)
+			dma_sync_sgtable_for_cpu(attachment->dev, table, direction);
+	} else {
+		dma_unmap_sgtable(attachment->dev, table, direction, attr);
+	}
+	mutex_unlock(&buffer->lock);
+}
+
+/* All tables below describe the same buffer's original physical SG extents. */
+static void system_heap_sync_sgtable(struct device *dev, struct sg_table *table,
+				     enum dma_data_direction direction,
+				     bool for_cpu, bool *synced)
+{
+	bool cache_only = iommu_dma_sync_sgtable_is_cache_only(dev, table);
+
+	if (cache_only && *synced)
+		return;
+
+	if (for_cpu)
+		dma_sync_sgtable_for_cpu(dev, table, direction);
+	else
+		dma_sync_sgtable_for_device(dev, table, direction);
+	if (cache_only)
+		*synced = true;
 }
 
 static int system_heap_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
@@ -174,6 +540,8 @@ static int system_heap_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
 {
 	struct system_heap_buffer *buffer = dmabuf->priv;
 	struct dma_heap_attachment *a;
+	struct system_heap_iova_mapping *mapping;
+	bool synced = false;
 
 	mutex_lock(&buffer->lock);
 
@@ -182,10 +550,14 @@ static int system_heap_dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
 
 	if (!buffer->uncached) {
 		list_for_each_entry(a, &buffer->attachments, list) {
-			if (!a->mapped)
+			if (!a->mapped || a->iova_mapping)
 				continue;
-			dma_sync_sgtable_for_cpu(a->dev, a->table, direction);
+			system_heap_sync_sgtable(a->dev, a->table, direction,
+						 true, &synced);
 		}
+		list_for_each_entry(mapping, &buffer->iova_mappings, list)
+			system_heap_sync_sgtable(mapping->dev, mapping->table,
+						 direction, true, &synced);
 	}
 	mutex_unlock(&buffer->lock);
 
@@ -197,6 +569,8 @@ static int system_heap_dma_buf_end_cpu_access(struct dma_buf *dmabuf,
 {
 	struct system_heap_buffer *buffer = dmabuf->priv;
 	struct dma_heap_attachment *a;
+	struct system_heap_iova_mapping *mapping;
+	bool synced = false;
 
 	mutex_lock(&buffer->lock);
 
@@ -205,14 +579,113 @@ static int system_heap_dma_buf_end_cpu_access(struct dma_buf *dmabuf,
 
 	if (!buffer->uncached) {
 		list_for_each_entry(a, &buffer->attachments, list) {
-			if (!a->mapped)
+			if (!a->mapped || a->iova_mapping)
 				continue;
-			dma_sync_sgtable_for_device(a->dev, a->table, direction);
+			system_heap_sync_sgtable(a->dev, a->table, direction,
+						 false, &synced);
 		}
+		list_for_each_entry(mapping, &buffer->iova_mappings, list)
+			system_heap_sync_sgtable(mapping->dev, mapping->table,
+						 direction, false, &synced);
 	}
 	mutex_unlock(&buffer->lock);
 
 	return 0;
+}
+
+static int system_heap_sync_range(struct device *dev, struct sg_table *table,
+				 enum dma_data_direction direction,
+				 unsigned int offset, unsigned int len,
+				 bool for_cpu, bool *synced)
+{
+	bool cache_only = iommu_dma_sync_sgtable_is_cache_only(dev, table);
+	int ret;
+
+	if (cache_only && *synced)
+		return 0;
+
+	/*
+	 * Match the IOMMU SG sync path using the known physical extents. A
+	 * single-range sync instead depends on a live IOVA-to-PA translation,
+	 * which is unnecessary for normal SG mappings and can yield PA zero.
+	 * Other DMA backends need the complete original table and metadata.
+	 */
+	ret = iommu_dma_sync_sgtable_range(dev, table, direction, offset, len,
+					   for_cpu);
+	if (ret && ret != -EOPNOTSUPP)
+		return ret;
+
+	if (ret == -EOPNOTSUPP) {
+		if (for_cpu)
+			dma_sync_sgtable_for_cpu(dev, table, direction);
+		else
+			dma_sync_sgtable_for_device(dev, table, direction);
+	}
+	if (cache_only)
+		*synced = true;
+	return 0;
+}
+
+static int system_heap_dma_buf_cpu_access_partial(struct dma_buf *dmabuf,
+					 enum dma_data_direction direction,
+					 unsigned int offset, unsigned int len,
+					 bool for_cpu)
+{
+	struct system_heap_buffer *buffer = dmabuf->priv;
+	struct system_heap_iova_mapping *mapping;
+	struct dma_heap_attachment *a;
+	bool synced = false;
+	int ret = 0;
+
+	if (!len || offset >= buffer->len || len > buffer->len - offset)
+		return -EINVAL;
+
+	mutex_lock(&buffer->lock);
+	if (buffer->vmap_cnt) {
+		void *vaddr = (char *)buffer->vaddr + offset;
+
+		if (for_cpu)
+			invalidate_kernel_vmap_range(vaddr, len);
+		else
+			flush_kernel_vmap_range(vaddr, len);
+	}
+	if (!buffer->uncached) {
+		list_for_each_entry(a, &buffer->attachments, list) {
+			if (!a->mapped || a->iova_mapping)
+				continue;
+			ret = system_heap_sync_range(a->dev, a->table,
+						    direction, offset, len, for_cpu,
+						    &synced);
+			if (ret)
+				goto out_unlock;
+		}
+		list_for_each_entry(mapping, &buffer->iova_mappings, list) {
+			ret = system_heap_sync_range(mapping->dev, mapping->table,
+						    direction, offset, len, for_cpu,
+						    &synced);
+			if (ret)
+				goto out_unlock;
+		}
+	}
+out_unlock:
+	mutex_unlock(&buffer->lock);
+	return ret;
+}
+
+static int system_heap_dma_buf_begin_cpu_access_partial(struct dma_buf *dmabuf,
+					 enum dma_data_direction direction,
+					 unsigned int offset, unsigned int len)
+{
+	return system_heap_dma_buf_cpu_access_partial(dmabuf, direction,
+						     offset, len, true);
+}
+
+static int system_heap_dma_buf_end_cpu_access_partial(struct dma_buf *dmabuf,
+				       enum dma_data_direction direction,
+				       unsigned int offset, unsigned int len)
+{
+	return system_heap_dma_buf_cpu_access_partial(dmabuf, direction,
+						     offset, len, false);
 }
 
 static int system_heap_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
@@ -314,9 +787,16 @@ static void system_heap_vunmap(struct dma_buf *dmabuf, struct iosys_map *map)
 static void system_heap_dma_buf_release(struct dma_buf *dmabuf)
 {
 	struct system_heap_buffer *buffer = dmabuf->priv;
+	struct system_heap_iova_mapping *mapping, *tmp_mapping;
 	struct sg_table *table;
 	struct scatterlist *sg;
 	int i;
+
+	list_for_each_entry_safe(mapping, tmp_mapping,
+				 &buffer->iova_mappings, list) {
+		list_del(&mapping->list);
+		system_heap_free_iova_mapping(mapping);
+	}
 
 	table = &buffer->sg_table;
 	for_each_sgtable_sg(table, sg, i) {
@@ -335,6 +815,8 @@ static const struct dma_buf_ops system_heap_buf_ops = {
 	.unmap_dma_buf = system_heap_unmap_dma_buf,
 	.begin_cpu_access = system_heap_dma_buf_begin_cpu_access,
 	.end_cpu_access = system_heap_dma_buf_end_cpu_access,
+	.begin_cpu_access_partial = system_heap_dma_buf_begin_cpu_access_partial,
+	.end_cpu_access_partial = system_heap_dma_buf_end_cpu_access_partial,
 	.mmap = system_heap_mmap,
 	.vmap = system_heap_vmap,
 	.vunmap = system_heap_vunmap,
@@ -386,6 +868,7 @@ static struct dma_buf *system_heap_do_allocate(struct dma_heap *heap,
 		return ERR_PTR(-ENOMEM);
 
 	INIT_LIST_HEAD(&buffer->attachments);
+	INIT_LIST_HEAD(&buffer->iova_mappings);
 	mutex_init(&buffer->lock);
 	buffer->heap = heap;
 	buffer->len = len;
@@ -501,6 +984,8 @@ static struct dma_heap_ops system_uncached_heap_ops = {
 static int system_heap_create(void)
 {
 	struct dma_heap_export_info exp_info;
+	struct device *heap_dev;
+	int ret;
 
 	exp_info.name = "system";
 	exp_info.ops = &system_heap_ops;
@@ -518,7 +1003,32 @@ static int system_heap_create(void)
 	if (IS_ERR(sys_uncached_heap))
 		return PTR_ERR(sys_uncached_heap);
 
-	dma_coerce_mask_and_coherent(dma_heap_get_dev(sys_uncached_heap), DMA_BIT_MASK(64));
+	/* Legacy MediaTek userspace selects these heaps by name. */
+	exp_info.name = "mtk_mm";
+	exp_info.ops = &system_heap_ops;
+	mtk_mm_heap = dma_heap_add(&exp_info);
+	if (IS_ERR(mtk_mm_heap))
+		return PTR_ERR(mtk_mm_heap);
+	heap_dev = dma_heap_get_dev(mtk_mm_heap);
+	ret = dma_coerce_mask_and_coherent(heap_dev, DMA_BIT_MASK(64));
+	if (ret)
+		return ret;
+
+	exp_info.name = "mtk_mm-uncached";
+	exp_info.ops = &system_uncached_heap_ops;
+	mtk_mm_uncached_heap = dma_heap_add(&exp_info);
+	if (IS_ERR(mtk_mm_uncached_heap))
+		return PTR_ERR(mtk_mm_uncached_heap);
+
+	heap_dev = dma_heap_get_dev(sys_uncached_heap);
+	ret = dma_coerce_mask_and_coherent(heap_dev, DMA_BIT_MASK(64));
+	if (ret)
+		return ret;
+	heap_dev = dma_heap_get_dev(mtk_mm_uncached_heap);
+	ret = dma_coerce_mask_and_coherent(heap_dev, DMA_BIT_MASK(64));
+	if (ret)
+		return ret;
+
 	mb(); /* make sure we only set allocate after dma_mask is set */
 	system_uncached_heap_ops.allocate = system_uncached_heap_allocate;
 
