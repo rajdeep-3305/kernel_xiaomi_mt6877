@@ -75,6 +75,9 @@
 #include <asm/mmu_context.h>
 #include <trace/hooks/mm.h>
 #include <trace/hooks/dtask.h>
+#ifdef CONFIG_MTK_TASK_TURBO
+#include "../drivers/misc/mediatek/include/mt-plat/turbo_common.h"
+#endif
 
 /*
  * The default value should be high enough to not crash a system that randomly
@@ -838,6 +841,9 @@ void __noreturn do_exit(long code)
 
 	io_uring_files_cancel();
 	exit_signals(tsk);  /* sets PF_EXITING */
+#ifdef CONFIG_MTK_TASK_TURBO
+	task_turbo_task_exit(tsk);
+#endif
 
 	seccomp_filter_release(tsk);
 

@@ -118,6 +118,9 @@
 #include <trace/hooks/sched.h>
 #include <trace/hooks/dtask.h>
 #include <trace/hooks/mm.h>
+#ifdef CONFIG_MTK_TASK_TURBO
+#include "../drivers/misc/mediatek/include/mt-plat/turbo_common.h"
+#endif
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -606,6 +609,7 @@ void put_task_stack(struct task_struct *tsk)
 	if (refcount_dec_and_test(&tsk->stack_refcount))
 		release_task_stack(tsk);
 }
+EXPORT_SYMBOL(put_task_stack);
 #endif
 
 void free_task(struct task_struct *tsk)
@@ -1237,6 +1241,10 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 #endif
 	android_init_vendor_data(tsk, 1);
 	android_init_oem_data(tsk, 1);
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	/* Preserve the per-task preference across fork, as stock Ruby does. */
+	tsk->ruby_cpu_prefer = READ_ONCE(orig->ruby_cpu_prefer);
+#endif
 	android_init_dynamic_vendor_data(tsk);
 	trace_android_vh_dup_task_struct(tsk, orig);
 	return tsk;
@@ -2476,6 +2484,10 @@ __latent_entropy struct task_struct *copy_process(
 
 	task_io_accounting_init(&p->ioac);
 	acct_clear_integrals(p);
+
+#ifdef CONFIG_MTK_TASK_TURBO
+	init_turbo_attr(p, current);
+#endif
 
 	posix_cputimers_init(&p->posix_cputimers);
 	tick_dep_init_task(p);
