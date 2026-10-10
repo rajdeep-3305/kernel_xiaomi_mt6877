@@ -590,3 +590,19 @@ config UML_RANDOM
 	  entropy pool.
 
 	  If unsure, say Y.
+
+config HW_RANDOM_MT67XX
+	tristate "Mediatek MT67XX secure Random Number Generator support"
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on HW_RANDOM && HAVE_ARM_SMCCC
+	default HW_RANDOM if ARCH_MEDIATEK
+	help
+	  Enable the secure-world backed random number generator found on
+	  MediaTek MT67xx SoCs. Unlike the MMIO based MediaTek RNG, this
+	  hardware is accessed through a MediaTek SIP call.
+
+	  To compile this driver as a module, choose M here. The module will
+	  be called mt67xx-rng.
+
+	  If unsure, say Y.
+
