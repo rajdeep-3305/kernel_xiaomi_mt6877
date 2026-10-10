@@ -140,18 +140,15 @@ struct mtk_mmsys {
 static void mtk_mmsys_update_bits(struct mtk_mmsys *mmsys, u32 offset, u32 mask, u32 val,
 				  struct cmdq_pkt *cmdq_pkt)
 {
-	int ret;
 	u32 tmp;
 
-	if (mmsys->cmdq_base.size && cmdq_pkt) {
-		ret = cmdq_pkt_write_mask(cmdq_pkt, mmsys->cmdq_base.subsys,
-					  mmsys->cmdq_base.offset + offset, val,
-					  mask);
-		if (ret)
-			pr_debug("CMDQ unavailable: using CPU write\n");
-		else
-			return;
-	}
+	/*
+	 * MT6877 vendor tree does not link mtk-cmdq-helper (GCE helper is
+	 * entangled with the vendor mailbox/sec/util code that is not built
+	 * into vmlinux).  Always use the CPU fallback path; it is the same
+	 * code the upstream driver falls back to when CMDQ is unavailable.
+	 */
+	(void)cmdq_pkt;
 	tmp = readl_relaxed(mmsys->regs + offset);
 	tmp = (tmp & ~mask) | (val & mask);
 	writel_relaxed(tmp, mmsys->regs + offset);
