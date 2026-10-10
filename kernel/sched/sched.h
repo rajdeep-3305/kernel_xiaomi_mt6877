@@ -8,6 +8,7 @@
 #include <linux/sched/affinity.h>
 #include <linux/sched/autogroup.h>
 #include <linux/sched/cpufreq.h>
+#include <linux/sched/cputime.h>
 #include <linux/sched/deadline.h>
 #include <linux/sched.h>
 #include <linux/sched/loadavg.h>
@@ -337,6 +338,10 @@ struct rt_rq;
 
 extern struct list_head task_groups;
 
+#ifdef CONFIG_MTK_RUBY_BIG_TASK_ROTATION
+int ruby_rotation_set_top_app_uclamp(bool enable);
+#endif
+
 struct cfs_bandwidth {
 #ifdef CONFIG_CFS_BANDWIDTH
 	raw_spinlock_t		lock;
@@ -416,6 +421,10 @@ struct task_group {
 	struct uclamp_se	uclamp[UCLAMP_CNT];
 	/* Latency-sensitive flag used for a task group */
 	unsigned int		latency_sensitive;
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	/* Perf manager's prefer-idle request, separate from the cgroup ABI. */
+	bool			ruby_prefer_idle;
+#endif
 
 	ANDROID_VENDOR_DATA_ARRAY(1, 4);
 #endif
