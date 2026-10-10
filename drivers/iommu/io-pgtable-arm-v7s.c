@@ -338,6 +338,9 @@ static arm_v7s_iopte arm_v7s_prot_to_pte(int prot, int lvl,
 	bool ap = !(cfg->quirks & IO_PGTABLE_QUIRK_NO_PERMS);
 	arm_v7s_iopte pte = ARM_V7S_ATTR_NG | ARM_V7S_ATTR_S;
 
+	if (cfg->quirks & IO_PGTABLE_QUIRK_ARM_MTK_NO_SHARE)
+		pte &= ~ARM_V7S_ATTR_S;
+
 	if (!(prot & IOMMU_MMIO))
 		pte |= ARM_V7S_ATTR_TEX(1);
 	if (ap) {
@@ -552,8 +555,9 @@ static int arm_v7s_map_pages(struct io_pgtable_ops *ops, unsigned long iova,
 		    paddr >= (1ULL << data->iop.cfg.oas)))
 		return -ERANGE;
 
+	/* If no access, then nothing to do */
 	if (!(prot & (IOMMU_READ | IOMMU_WRITE)))
-		return -EINVAL;
+		return 0;
 
 	while (pgcount--) {
 		ret = __arm_v7s_map(data, iova, paddr, pgsize, prot, 1, data->pgd,
@@ -563,7 +567,8 @@ static int arm_v7s_map_pages(struct io_pgtable_ops *ops, unsigned long iova,
 
 		iova += pgsize;
 		paddr += pgsize;
-		*mapped += pgsize;
+		if (mapped)
+			*mapped += pgsize;
 	}
 	/*
 	 * Synchronise all PTE updates for the new mapping before there's
@@ -572,6 +577,12 @@ static int arm_v7s_map_pages(struct io_pgtable_ops *ops, unsigned long iova,
 	wmb();
 
 	return ret;
+}
+
+static __maybe_unused int arm_v7s_map(struct io_pgtable_ops *ops, unsigned long iova,
+		       phys_addr_t paddr, size_t size, int prot, gfp_t gfp)
+{
+	return arm_v7s_map_pages(ops, iova, paddr, size, 1, prot, gfp, NULL);
 }
 
 static void arm_v7s_free_pgtable(struct io_pgtable *iop)
@@ -756,6 +767,12 @@ static size_t arm_v7s_unmap_pages(struct io_pgtable_ops *ops, unsigned long iova
 	return unmapped;
 }
 
+static __maybe_unused size_t arm_v7s_unmap(struct io_pgtable_ops *ops, unsigned long iova,
+			    size_t size, struct iommu_iotlb_gather *gather)
+{
+	return arm_v7s_unmap_pages(ops, iova, size, 1, gather);
+}
+
 static phys_addr_t arm_v7s_iova_to_phys(struct io_pgtable_ops *ops,
 					unsigned long iova)
 {
@@ -795,7 +812,8 @@ static struct io_pgtable *arm_v7s_alloc_pgtable(struct io_pgtable_cfg *cfg,
 	if (cfg->quirks & ~(IO_PGTABLE_QUIRK_ARM_NS |
 			    IO_PGTABLE_QUIRK_NO_PERMS |
 			    IO_PGTABLE_QUIRK_ARM_MTK_EXT |
-			    IO_PGTABLE_QUIRK_ARM_MTK_TTBR_EXT))
+			    IO_PGTABLE_QUIRK_ARM_MTK_TTBR_EXT |
+			    IO_PGTABLE_QUIRK_ARM_MTK_NO_SHARE))
 		return NULL;
 
 	/* If ARM_MTK_4GB is enabled, the NO_PERMS is also expected. */
@@ -804,6 +822,10 @@ static struct io_pgtable *arm_v7s_alloc_pgtable(struct io_pgtable_cfg *cfg,
 			return NULL;
 
 	if ((cfg->quirks & IO_PGTABLE_QUIRK_ARM_MTK_TTBR_EXT) &&
+	    !arm_v7s_is_mtk_enabled(cfg))
+		return NULL;
+
+	if ((cfg->quirks & IO_PGTABLE_QUIRK_ARM_MTK_NO_SHARE) &&
 	    !arm_v7s_is_mtk_enabled(cfg))
 		return NULL;
 
@@ -944,7 +966,6 @@ static int __init arm_v7s_do_selftests(void)
 	};
 	unsigned int iova, size, iova_start;
 	unsigned int i, loopnr = 0;
-	size_t mapped;
 
 	selftest_running = true;
 
@@ -975,16 +996,15 @@ static int __init arm_v7s_do_selftests(void)
 	iova = 0;
 	for_each_set_bit(i, &cfg.pgsize_bitmap, BITS_PER_LONG) {
 		size = 1UL << i;
-		if (ops->map_pages(ops, iova, iova, size, 1,
-				   IOMMU_READ | IOMMU_WRITE |
-				   IOMMU_NOEXEC | IOMMU_CACHE,
-				   GFP_KERNEL, &mapped))
+		if (ops->map(ops, iova, iova, size, IOMMU_READ |
+						    IOMMU_WRITE |
+						    IOMMU_NOEXEC |
+						    IOMMU_CACHE, GFP_KERNEL))
 			return __FAIL(ops);
 
 		/* Overlapping mappings */
-		if (!ops->map_pages(ops, iova, iova + size, size, 1,
-				    IOMMU_READ | IOMMU_NOEXEC, GFP_KERNEL,
-				    &mapped))
+		if (!ops->map(ops, iova, iova + size, size,
+			      IOMMU_READ | IOMMU_NOEXEC, GFP_KERNEL))
 			return __FAIL(ops);
 
 		if (ops->iova_to_phys(ops, iova + 42) != (iova + 42))
@@ -999,12 +1019,11 @@ static int __init arm_v7s_do_selftests(void)
 	size = 1UL << __ffs(cfg.pgsize_bitmap);
 	while (i < loopnr) {
 		iova_start = i * SZ_16M;
-		if (ops->unmap_pages(ops, iova_start + size, size, 1, NULL) != size)
+		if (ops->unmap(ops, iova_start + size, size, NULL) != size)
 			return __FAIL(ops);
 
 		/* Remap of partial unmap */
-		if (ops->map_pages(ops, iova_start + size, size, size, 1,
-				   IOMMU_READ, GFP_KERNEL, &mapped))
+		if (ops->map(ops, iova_start + size, size, size, IOMMU_READ, GFP_KERNEL))
 			return __FAIL(ops);
 
 		if (ops->iova_to_phys(ops, iova_start + size + 42)
@@ -1018,15 +1037,14 @@ static int __init arm_v7s_do_selftests(void)
 	for_each_set_bit(i, &cfg.pgsize_bitmap, BITS_PER_LONG) {
 		size = 1UL << i;
 
-		if (ops->unmap_pages(ops, iova, size, 1, NULL) != size)
+		if (ops->unmap(ops, iova, size, NULL) != size)
 			return __FAIL(ops);
 
 		if (ops->iova_to_phys(ops, iova + 42))
 			return __FAIL(ops);
 
 		/* Remap full block */
-		if (ops->map_pages(ops, iova, iova, size, 1, IOMMU_WRITE,
-				   GFP_KERNEL, &mapped))
+		if (ops->map(ops, iova, iova, size, IOMMU_WRITE, GFP_KERNEL))
 			return __FAIL(ops);
 
 		if (ops->iova_to_phys(ops, iova + 42) != (iova + 42))
