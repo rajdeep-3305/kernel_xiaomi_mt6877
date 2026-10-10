@@ -5,6 +5,7 @@
  */
 
 #include <trace/hooks/sched.h>
+#include "ruby_prefer.h"
 
 int sched_rr_timeslice = RR_TIMESLICE;
 /* More than 4 hours if BW_SHIFT equals 20. */
@@ -1723,7 +1724,11 @@ select_task_rq_rt(struct task_struct *p, int cpu, int flags)
 		goto out_unlock;
 	}
 
-	if (test || !rt_task_fits_cpu(p, cpu)) {
+	if (test || !rt_task_fits_cpu(p, cpu)
+#ifdef CONFIG_MTK_RUBY_SCHED_INTEROP
+	    || p->nr_cpus_allowed > 1
+#endif
+	   ) {
 		int target = find_lowest_rq(p);
 
 		/*
@@ -1746,6 +1751,9 @@ out_unlock:
 	rcu_read_unlock();
 
 out:
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	cpu = ruby_prefer_cpu(p, cpu);
+#endif
 	return cpu;
 }
 
@@ -2009,6 +2017,31 @@ static int find_lowest_rq(struct task_struct *task)
 		return -1; /* No targets found */
 
 	cpu = task_cpu(task);
+
+#ifdef CONFIG_MTK_RUBY_SCHED_INTEROP
+	/* The stock interop path searches an idle CPU in ascending capacity
+	 * order before keeping a cache-hot CPU that is running fair work.
+	 */
+	{
+		int candidate, idle_target = -1;
+		unsigned long idle_capacity = ULONG_MAX;
+
+		for_each_cpu(candidate, lowest_mask) {
+			unsigned long capacity;
+
+			if (!cpu_active(candidate) || !idle_cpu(candidate))
+				continue;
+			capacity = capacity_orig_of(candidate);
+			if (capacity < idle_capacity ||
+			    (capacity == idle_capacity && candidate == cpu)) {
+				idle_target = candidate;
+				idle_capacity = capacity;
+			}
+		}
+		if (idle_target >= 0)
+			return idle_target;
+	}
+#endif
 
 	/*
 	 * At this point we have built a mask of CPUs representing the
