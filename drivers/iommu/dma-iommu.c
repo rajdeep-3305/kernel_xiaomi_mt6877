@@ -572,6 +572,7 @@ static int iommu_dma_init_domain(struct iommu_domain *domain, dma_addr_t base,
 				 dma_addr_t limit, struct device *dev)
 {
 	struct iommu_dma_cookie *cookie = domain->iova_cookie;
+	u64 device_limit;
 	unsigned long order, base_pfn;
 	struct iova_domain *iovad;
 	int ret;
@@ -589,8 +590,15 @@ static int iommu_dma_init_domain(struct iommu_domain *domain, dma_addr_t base,
 	if (domain->geometry.force_aperture) {
 		if (base > domain->geometry.aperture_end ||
 		    limit < domain->geometry.aperture_start) {
-			pr_warn("specified DMA range outside IOMMU capability\n");
-			return -EFAULT;
+			device_limit = min_not_zero(dma_get_mask(dev),
+						    dev->bus_dma_limit);
+			if (dev->dma_range_map ||
+			    device_limit < domain->geometry.aperture_start) {
+				pr_warn("specified DMA range outside IOMMU capability\n");
+				return -EFAULT;
+			}
+			base_pfn = max_t(unsigned long, 1,
+					domain->geometry.aperture_start >> order);
 		}
 		/* ...then finally give it a kicking to make sure it fits */
 		base_pfn = max_t(unsigned long, base_pfn,
@@ -1656,6 +1664,105 @@ static const struct dma_map_ops iommu_dma_ops = {
 	.opt_mapping_size	= iommu_dma_opt_mapping_size,
 	.max_mapping_size       = iommu_dma_max_mapping_size,
 };
+
+/**
+ * iommu_dma_sync_sgtable_is_cache_only - Identify physical CPU cache sync
+ * @dev: Device which owns the DMA mapping
+ * @table: Original mapped scatterlist
+ *
+ * Noncoherent, unbounced mappings using these DMA ops synchronize the original
+ * physical SG extents, independently of their IOVAs. An exporter can therefore
+ * share one cache pass between such mappings of the same pages and range.
+ * Coherent devices, DMA bypass, bounce buffers and other DMA backends must keep
+ * their individual synchronization operations.
+ */
+bool iommu_dma_sync_sgtable_is_cache_only(struct device *dev,
+					  struct sg_table *table)
+{
+	if (!dev || !table || !table->sgl || !table->orig_nents ||
+	    !table->nents || table->nents > table->orig_nents ||
+	    get_dma_ops(dev) != &iommu_dma_ops || dev_is_dma_coherent(dev) ||
+	    sg_dma_is_swiotlb(table->sgl))
+		return false;
+#ifdef CONFIG_DMA_OPS_BYPASS
+	if (dev->dma_ops_bypass)
+		return false;
+#endif
+	return true;
+}
+EXPORT_SYMBOL_GPL(iommu_dma_sync_sgtable_is_cache_only);
+
+/**
+ * iommu_dma_sync_sgtable_range - Sync a range using the original physical SG
+ * @dev: Device which owns the DMA mapping
+ * @table: Original mapped table, with its physical SG entries preserved
+ * @direction: Direction of the ownership transfer
+ * @offset: Offset into the buffer
+ * @len: Length of the range
+ * @for_cpu: Whether ownership is transferred to the CPU
+ *
+ * The caller must keep the table and its mapping stable throughout the call.
+ * Return -EOPNOTSUPP when full DMA-API sync is needed for another DMA backend,
+ * bypass mode, or bounce buffers. Do not resolve packed IOVAs for normal SG
+ * sync: each original physical extent is already known, as in the full sync.
+ */
+int iommu_dma_sync_sgtable_range(struct device *dev, struct sg_table *table,
+				 enum dma_data_direction direction,
+				 size_t offset, size_t len, bool for_cpu)
+{
+	struct scatterlist *sg;
+	size_t position = 0, end;
+	unsigned int i;
+
+	if (!table || !table->sgl || !table->orig_nents || !table->nents ||
+	    table->nents > table->orig_nents || !len ||
+	    offset > SIZE_MAX - len || !valid_dma_direction(direction))
+		return -EINVAL;
+	if (get_dma_ops(dev) != &iommu_dma_ops ||
+	    sg_dma_is_swiotlb(table->sgl))
+		return -EOPNOTSUPP;
+#ifdef CONFIG_DMA_OPS_BYPASS
+	if (dev->dma_ops_bypass)
+		return -EOPNOTSUPP;
+#endif
+	end = offset + len;
+	/* Validate the entire requested extent before any cache operation. */
+	for_each_sgtable_sg(table, sg, i) {
+		if (!sg->length || sg->length > SIZE_MAX - position)
+			return -EINVAL;
+		position += sg->length;
+		if (position >= end)
+			break;
+	}
+	if (position < end)
+		return -EINVAL;
+	if (dev_is_dma_coherent(dev))
+		return 0;
+
+	position = 0;
+	for_each_sgtable_sg(table, sg, i) {
+		size_t sg_end, start, stop;
+		phys_addr_t phys;
+
+		sg_end = position + sg->length;
+		if (sg_end <= offset) {
+			position = sg_end;
+			continue;
+		}
+		start = max(position, offset);
+		stop = min(sg_end, end);
+		phys = sg_phys(sg) + start - position;
+		if (for_cpu)
+			arch_sync_dma_for_cpu(phys, stop - start, direction);
+		else
+			arch_sync_dma_for_device(phys, stop - start, direction);
+		if (sg_end >= end)
+			return 0;
+		position = sg_end;
+	}
+	return -EINVAL;
+}
+EXPORT_SYMBOL_GPL(iommu_dma_sync_sgtable_range);
 
 /*
  * The IOMMU core code allocates the default DMA domain, which the underlying
