@@ -54,6 +54,7 @@ config LEDS_MT6360
 	depends on LEDS_CLASS_FLASH || !LEDS_CLASS_FLASH
 	depends on LEDS_CLASS_MULTICOLOR || !LEDS_CLASS_MULTICOLOR
 	depends on V4L2_FLASH_LED_CLASS || !V4L2_FLASH_LED_CLASS
+	depends on MTK_FLASHLIGHT || !MTK_FLASHLIGHT
 	depends on MFD_MT6360
 	help
 	  This option enables support for dual Flash LED drivers found on

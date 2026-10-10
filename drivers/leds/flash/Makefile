@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/flashlight
+
 obj-$(CONFIG_LEDS_MT6360)	+= leds-mt6360.o
 obj-$(CONFIG_LEDS_MT6370_FLASH)	+= leds-mt6370-flash.o
 obj-$(CONFIG_LEDS_AAT1290)	+= leds-aat1290.o
