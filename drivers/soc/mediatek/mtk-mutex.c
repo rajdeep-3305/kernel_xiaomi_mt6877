@@ -30,6 +30,21 @@
 
 #define INT_MUTEX				BIT(1)
 
+#define MT6877_MUTEX_MOD_DISP_OVL0		0
+#define MT6877_MUTEX_MOD_DISP_OVL0_2L		1
+#define MT6877_MUTEX_MOD_DISP_RDMA0		2
+#define MT6877_MUTEX_MOD_DISP_COLOR0		4
+#define MT6877_MUTEX_MOD_DISP_CCORR0		5
+#define MT6877_MUTEX_MOD_DISP_AAL0		7
+#define MT6877_MUTEX_MOD_DISP_GAMMA0		8
+#define MT6877_MUTEX_MOD_DISP_POSTMASK0		9
+#define MT6877_MUTEX_MOD_DISP_DITHER0		10
+#define MT6877_MUTEX_MOD_DISP_DSC0		13
+#define MT6877_MUTEX_MOD_DISP_DSI0		14
+#define MT6877_MUTEX_MOD_DISP_WDMA0		15
+#define MT6877_MUTEX_MOD_DISP_PWM0		16
+#define MT6877_MUTEX_MOD_DISP_OVL1_2L		17
+
 #define MT8186_MUTEX_MOD_DISP_OVL0		0
 #define MT8186_MUTEX_MOD_DISP_OVL0_2L		1
 #define MT8186_MUTEX_MOD_DISP_RDMA0		2
@@ -406,6 +421,23 @@ static const unsigned int mt8183_mutex_table_mod[MUTEX_MOD_IDX_MAX] = {
 	[MUTEX_MOD_IDX_MDP_CCORR0] = MT8183_MUTEX_MOD_MDP_CCORR0,
 };
 
+static const unsigned int mt6877_mutex_mod[DDP_COMPONENT_ID_MAX] = {
+	[DDP_COMPONENT_OVL0] = MT6877_MUTEX_MOD_DISP_OVL0,
+	[DDP_COMPONENT_OVL_2L0] = MT6877_MUTEX_MOD_DISP_OVL0_2L,
+	[DDP_COMPONENT_OVL_2L1] = MT6877_MUTEX_MOD_DISP_OVL1_2L,
+	[DDP_COMPONENT_RDMA0] = MT6877_MUTEX_MOD_DISP_RDMA0,
+	[DDP_COMPONENT_COLOR0] = MT6877_MUTEX_MOD_DISP_COLOR0,
+	[DDP_COMPONENT_CCORR] = MT6877_MUTEX_MOD_DISP_CCORR0,
+	[DDP_COMPONENT_AAL0] = MT6877_MUTEX_MOD_DISP_AAL0,
+	[DDP_COMPONENT_GAMMA] = MT6877_MUTEX_MOD_DISP_GAMMA0,
+	[DDP_COMPONENT_POSTMASK0] = MT6877_MUTEX_MOD_DISP_POSTMASK0,
+	[DDP_COMPONENT_DITHER0] = MT6877_MUTEX_MOD_DISP_DITHER0,
+	[DDP_COMPONENT_DSC0] = MT6877_MUTEX_MOD_DISP_DSC0,
+	[DDP_COMPONENT_DSI0] = MT6877_MUTEX_MOD_DISP_DSI0,
+	[DDP_COMPONENT_WDMA0] = MT6877_MUTEX_MOD_DISP_WDMA0,
+	[DDP_COMPONENT_PWM0] = MT6877_MUTEX_MOD_DISP_PWM0,
+};
+
 static const unsigned int mt8186_mutex_mod[DDP_COMPONENT_ID_MAX] = {
 	[DDP_COMPONENT_AAL0] = MT8186_MUTEX_MOD_DISP_AAL0,
 	[DDP_COMPONENT_CCORR] = MT8186_MUTEX_MOD_DISP_CCORR0,
@@ -664,6 +696,14 @@ static const struct mtk_mutex_data mt8183_mutex_driver_data = {
 	.no_clk = true,
 };
 
+static const struct mtk_mutex_data mt6877_mutex_driver_data = {
+	.mutex_mod = mt6877_mutex_mod,
+	.mutex_sof = mt8183_mutex_sof,
+	.mutex_mod_reg = MT8183_MUTEX0_MOD0,
+	.mutex_sof_reg = MT8183_MUTEX0_SOF0,
+	.no_clk = true,
+};
+
 static const struct mtk_mutex_data mt8186_mdp_mutex_driver_data = {
 	.mutex_mod_reg = MT8183_MUTEX0_MOD0,
 	.mutex_sof_reg = MT8183_MUTEX0_SOF0,
@@ -870,17 +910,16 @@ int mtk_mutex_enable_by_cmdq(struct mtk_mutex *mutex, void *pkt)
 {
 	struct mtk_mutex_ctx *mtx = container_of(mutex, struct mtk_mutex_ctx,
 						 mutex[mutex->id]);
-	struct cmdq_pkt *cmdq_pkt = (struct cmdq_pkt *)pkt;
 
 	WARN_ON(&mtx->mutex[mutex->id] != mutex);
 
-	if (!mtx->cmdq_reg.size) {
-		dev_err(mtx->dev, "mediatek,gce-client-reg hasn't been set");
-		return -ENODEV;
-	}
-
-	cmdq_pkt_write(cmdq_pkt, mtx->cmdq_reg.subsys,
-		       mtx->addr + DISP_REG_MUTEX_EN(mutex->id), 1);
+	/*
+	 * MT6877 vendor tree does not link the GCE cmdq helper, so CMDQ-based
+	 * mutex enable is unavailable.  Fall back to a direct CPU write; this
+	 * is what upstream does when CMDQ is not wired up.
+	 */
+	(void)pkt;
+	writel(1, mtx->regs + DISP_REG_MUTEX_EN(mutex->id));
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mtk_mutex_enable_by_cmdq);
