@@ -8,7 +8,7 @@
 #ifndef __MT6779_PINFUNC_H
 #define __MT6779_PINFUNC_H
 
-#include <dt-bindings/pinctrl/mt65xx.h>
+#include "mt65xx.h"
 
 #define PINMUX_GPIO0__FUNC_GPIO0 (MTK_PIN_NO(0) | 0)
 #define PINMUX_GPIO0__FUNC_SPI6_MI (MTK_PIN_NO(0) | 1)
@@ -1238,5 +1238,8 @@
 #define PINMUX_GPIO208__FUNC_GPIO208 (MTK_PIN_NO(208) | 0)
 
 #define PINMUX_GPIO209__FUNC_GPIO209 (MTK_PIN_NO(209) | 0)
+
+
+
 
 #endif /* __MT6779-PINFUNC_H */
