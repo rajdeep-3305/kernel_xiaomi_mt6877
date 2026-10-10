@@ -13,3 +13,20 @@ config ASHMEM
 	  because it can discard shared memory units when under memory pressure.
 
 endmenu
+
+config MTK_ION_COMPAT
+	bool "MediaTek legacy ION DMA-BUF import compatibility"
+	depends on 64BIT
+	depends on DMA_SHARED_BUFFER
+	depends on DMABUF_HEAPS_SYSTEM=y
+	depends on IOMMU_API
+	depends on MTK_IOMMU
+	depends on !MTK_PSEUDO_M4U
+	depends on OF
+	depends on PM
+	help
+	  Provide the legacy /dev/ion IMPORT, SHARE, FREE and MediaTek
+	  GET_IOVA ioctls needed by older MediaTek multimedia userspace while
+	  keeping DMA-BUF heaps as the allocator. This does not provide legacy
+	  ION allocation heaps.
+
