@@ -125,6 +125,10 @@ static inline void *pde_data(const struct inode *inode)
 	return inode->i_private;
 }
 
+#ifndef PDE_DATA
+#define PDE_DATA(inode) pde_data(inode)
+#endif
+
 extern void *proc_get_parent_data(const struct inode *);
 extern void proc_remove(struct proc_dir_entry *);
 extern void remove_proc_entry(const char *, struct proc_dir_entry *);
