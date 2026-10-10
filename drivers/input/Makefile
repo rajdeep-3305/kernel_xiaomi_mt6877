@@ -12,7 +12,6 @@ input-core-y += touchscreen.o
 obj-$(CONFIG_INPUT_FF_MEMLESS)	+= ff-memless.o
 obj-$(CONFIG_INPUT_SPARSEKMAP)	+= sparse-keymap.o
 obj-$(CONFIG_INPUT_MATRIXKMAP)	+= matrix-keymap.o
-obj-$(CONFIG_INPUT_VIVALDIFMAP)	+= vivaldi-fmap.o
 
 obj-$(CONFIG_INPUT_LEDS)	+= input-leds.o
 obj-$(CONFIG_INPUT_MOUSEDEV)	+= mousedev.o
@@ -26,8 +25,9 @@ obj-$(CONFIG_INPUT_JOYSTICK)	+= joystick/
 obj-$(CONFIG_INPUT_TABLET)	+= tablet/
 obj-$(CONFIG_INPUT_TOUCHSCREEN)	+= touchscreen/
 obj-$(CONFIG_INPUT_MISC)	+= misc/
-obj-$(CONFIG_INPUT_KUNIT_TEST)	+= tests/
 
 obj-$(CONFIG_INPUT_APMPOWER)	+= apm-power.o
+obj-y			+= vivaldi-fmap.o
 
 obj-$(CONFIG_RMI4_CORE)		+= rmi4/
+obj-$(CONFIG_MTK_FINGERPRINT_SUPPORT)	+= fingerprint/
