@@ -735,3 +735,15 @@ config GOLDFISH_TIMER
 	  Support for the timer/counter of goldfish-rtc
 
 endmenu
+
+config MTK_TIMER_APXGPT_V1
+      bool "Mediatek apxgpt driver" if COMPILE_TEST
+      depends on GENERIC_CLOCKEVENTS && HAS_IOMEM
+      select CLKSRC_OF
+      select CLKSRC_MMIO
+      help
+        Support for Mediatek NON-IPM gpt timer driver.
+        used for tick broadcast.
+        resolve some issue that gpt interrupt masked.
+        add important debug info.
+
