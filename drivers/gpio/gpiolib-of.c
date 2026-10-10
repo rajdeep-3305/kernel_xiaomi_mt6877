@@ -60,11 +60,6 @@ enum of_gpio_flags {
  * The above example defines four GPIOs, two of which are not specified.
  * This function will return '4'
  */
-static int of_gpio_named_count(const struct device_node *np,
-			       const char *propname)
-{
-	return of_count_phandle_with_args(np, propname, "#gpio-cells");
-}
 
 /**
  * of_gpio_spi_cs_get_count() - special GPIO counting for SPI
