@@ -36,3 +36,16 @@ config MTK_UART_APDMA
 	  When SERIAL_8250_MT6577 is enabled, and if you want to use DMA,
 	  you can enable the config. The DMA engine can only be used
 	  with MediaTek SoCs.
+
+config MEDIATEK_CQDMA
+        tristate "MediaTek Command-Queue DMA controller support"
+        select DMA_ENGINE
+        select DMA_VIRTUAL_CHANNELS
+        select ASYNC_TX_ENABLE_CHANNEL_SWITCH
+        help
+          Enable support for Command-Queue DMA controller on MediaTek
+          SoCs.
+
+          This controller provides the channels which is dedicated to
+          memory-to-memory transfer to offload from CPU.
+
