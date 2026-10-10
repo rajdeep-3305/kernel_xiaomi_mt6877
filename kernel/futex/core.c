@@ -41,6 +41,9 @@
 #include "futex.h"
 #include "../locking/rtmutex_common.h"
 #include <trace/hooks/futex.h>
+#ifdef CONFIG_MTK_TASK_TURBO
+#include "../../drivers/misc/mediatek/include/mt-plat/task_turbo_futex.h"
+#endif
 
 /*
  * The base of the bucket array and its size are always used together
@@ -569,7 +572,11 @@ void __futex_queue(struct futex_q *q, struct futex_hash_bucket *hb)
 	plist_node_init(&q->list, prio);
 	trace_android_vh_alter_futex_plist_add(&q->list, &hb->chain, &already_on_hb);
 	if (!already_on_hb)
+#ifdef CONFIG_MTK_TASK_TURBO
+		futex_plist_add(q, hb);
+#else
 		plist_add(&q->list, &hb->chain);
+#endif
 	q->task = current;
 }
 
