@@ -1449,3 +1449,21 @@ config XILINX_AMS
 	  xilinx-ams.
 
 endmenu
+
+config MT635X_AUXADC
+	tristate "MediaTek MT635x PMIC legacy AUXADC"
+	depends on MFD_MT6358
+	help
+	  Say yes here to enable the legacy MediaTek MT635x PMIC AUXADC
+	  driver used by vendor PMIC consumers that install conversion and
+	  calibration callbacks.
+
+config MEDIATEK_MT635X_AUXADC
+	bool "MediaTek MT635x PMIC AUXADC"
+	depends on MFD_MT6358 && !MTK_PMIC_NEW_ARCH
+	help
+	  Say yes here to enable the auxiliary ADC found in MediaTek MT635x
+	  power-management ICs handled by the MT6358-family MFD driver. The
+	  driver exposes voltage and temperature measurement channels through
+	  the Industrial I/O subsystem and manages MT6359 wake measurements.
+
