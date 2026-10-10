@@ -50,3 +50,34 @@ config SCSI_UFS_HWMON
 	  a hardware monitoring device will be created for the UFS device.
 
 	  If unsure, say N.
+
+config SCSI_UFS_FEATURE
+	bool "UFS vendor feature compatibility"
+	depends on SCSI_UFSHCD
+	help
+	  Keep the vendor feature namespace used by the Ruby 4.19 UFS driver.
+	  The common UFS core remains responsible for standard protocol support.
+
+config SCSI_UFS_TW
+	bool "MediaTek Turbo Write compatibility"
+	depends on SCSI_UFSHCD && SCSI_UFS_FEATURE
+	help
+	  Preserve Ruby's per-LU Turbo Write lifetime and suspend handling on top
+	  of the 6.6 UFS WriteBooster implementation.
+
+config SCSI_UFS_TW_IGNORE_GUARANTEE_BIT
+	bool "Ignore Turbo Write lifetime guarantee bit"
+	depends on SCSI_UFS_TW
+	help
+	  Keep Turbo Write enabled when a device reports that its lifetime estimate
+	  is not guaranteed. Select this only for devices known to report that bit
+	  incorrectly.
+
+config SCSI_UFS_HPB
+	bool "Support UFS Host Performance Booster"
+	depends on SCSI_UFSHCD
+	help
+	  Enable the UFS Host Performance Booster path. HPB caches the device's
+	  logical-to-physical map in host memory and adds the device's physical
+	  page information to eligible read commands.
+
