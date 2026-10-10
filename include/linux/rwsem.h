@@ -59,6 +59,9 @@ struct rw_semaphore {
 #endif
 	raw_spinlock_t wait_lock;
 	struct list_head wait_list;
+#ifdef CONFIG_MTK_TASK_TURBO
+	struct task_struct *turbo_owner;
+#endif
 #ifdef CONFIG_DEBUG_RWSEMS
 	void *magic;
 #endif
@@ -68,6 +71,10 @@ struct rw_semaphore {
 	ANDROID_VENDOR_DATA(1);
 	ANDROID_OEM_DATA_ARRAY(1, 2);
 };
+
+#ifdef CONFIG_MTK_TASK_TURBO
+struct task_struct *mtk_rwsem_owner(struct rw_semaphore *sem);
+#endif
 
 /* In all implementations count != 0 means locked */
 static inline int rwsem_is_locked(struct rw_semaphore *sem)

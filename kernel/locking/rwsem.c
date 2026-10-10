@@ -28,6 +28,9 @@
 #include <linux/rwsem.h>
 #include <linux/atomic.h>
 #include <trace/events/lock.h>
+#ifdef CONFIG_MTK_TASK_TURBO
+#include "../../drivers/misc/mediatek/include/mt-plat/turbo_common.h"
+#endif
 
 #ifndef CONFIG_PREEMPT_RT
 #include "lock_events.h"
@@ -292,6 +295,16 @@ static inline struct task_struct *rwsem_owner(struct rw_semaphore *sem)
 		(atomic_long_read(&sem->owner) & ~RWSEM_OWNER_FLAGS_MASK);
 }
 
+#ifdef CONFIG_MTK_TASK_TURBO
+struct task_struct *mtk_rwsem_owner(struct rw_semaphore *sem)
+{
+	if (atomic_long_read(&sem->owner) & RWSEM_READER_OWNED)
+		return NULL;
+	return rwsem_owner(sem);
+}
+EXPORT_SYMBOL_GPL(mtk_rwsem_owner);
+#endif
+
 /*
  * Return the real task structure pointer of the owner and the embedded
  * flags in the owner. pflags must be non-NULL.
@@ -342,6 +355,9 @@ void __init_rwsem(struct rw_semaphore *sem, const char *name,
 	raw_spin_lock_init(&sem->wait_lock);
 	INIT_LIST_HEAD(&sem->wait_list);
 	atomic_long_set(&sem->owner, 0L);
+#ifdef CONFIG_MTK_TASK_TURBO
+	sem->turbo_owner = NULL;
+#endif
 #ifdef CONFIG_RWSEM_SPIN_ON_OWNER
 	osq_lock_init(&sem->osq);
 #endif
@@ -391,7 +407,12 @@ static inline void
 rwsem_add_waiter(struct rw_semaphore *sem, struct rwsem_waiter *waiter)
 {
 	lockdep_assert_held(&sem->wait_lock);
+#ifdef CONFIG_MTK_TASK_TURBO
+	rwsem_list_add(waiter->task, &waiter->list, &sem->wait_list);
+	rwsem_start_turbo_inherit(sem);
+#else
 	list_add_tail(&waiter->list, &sem->wait_list);
+#endif
 	/* caller will set RWSEM_FLAG_WAITERS */
 }
 
@@ -1705,6 +1726,10 @@ void up_write(struct rw_semaphore *sem)
 {
 	rwsem_release(&sem->dep_map, _RET_IP_);
 	trace_android_vh_rwsem_write_finished(sem);
+#ifdef CONFIG_MTK_TASK_TURBO
+	/* Drop inheritance while the writer still owns the semaphore. */
+	rwsem_stop_turbo_inherit(sem);
+#endif
 	__up_write(sem);
 }
 EXPORT_SYMBOL(up_write);
@@ -1716,6 +1741,10 @@ void downgrade_write(struct rw_semaphore *sem)
 {
 	lock_downgrade(&sem->dep_map, _RET_IP_);
 	trace_android_vh_rwsem_write_finished(sem);
+#ifdef CONFIG_MTK_TASK_TURBO
+	/* Downgrade ends writer ownership and the associated inheritance. */
+	rwsem_stop_turbo_inherit(sem);
+#endif
 	__downgrade_write(sem);
 }
 EXPORT_SYMBOL(downgrade_write);
