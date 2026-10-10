@@ -24,6 +24,7 @@
  */
 
 #include <linux/tty.h>
+#include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/console.h>
 #include <linux/of.h>
@@ -32,6 +33,10 @@
 #include <linux/serial_8250.h>
 #include <asm/io.h>
 #include <asm/serial.h>
+
+#define SERIAL8250_EARLY_TX_TIMEOUT_US	10000
+
+static bool serial8250_early_tx_failed;
 
 static unsigned int serial8250_early_in(struct uart_port *port, int offset)
 {
@@ -78,16 +83,25 @@ static void serial8250_early_out(struct uart_port *port, int offset, int value)
 
 static void serial_putc(struct uart_port *port, unsigned char c)
 {
-	unsigned int status;
+	unsigned int status, timeout = SERIAL8250_EARLY_TX_TIMEOUT_US;
+
+	if (READ_ONCE(serial8250_early_tx_failed))
+		return;
 
 	serial8250_early_out(port, UART_TX, c);
 
-	for (;;) {
+	while (timeout--) {
 		status = serial8250_early_in(port, UART_LSR);
 		if (uart_lsr_tx_empty(status))
-			break;
-		cpu_relax();
+			return;
+		udelay(1);
 	}
+
+	/*
+	 * A debug UART must not hold the printk console lock forever if its
+	 * clock disappears while the real serial driver is taking over.
+	 */
+	WRITE_ONCE(serial8250_early_tx_failed, true);
 }
 
 static void early_serial8250_write(struct console *console,
