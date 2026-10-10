@@ -1,7 +1,15 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2017 MediaTek Inc.
  * Author: Weiyi Lu <weiyi.lu@mediatek.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #ifndef _DT_BINDINGS_CLK_MT2712_H
@@ -361,7 +369,9 @@
 #define CLK_MM_DSI2_DIGITAL		60
 #define CLK_MM_DSI3			61
 #define CLK_MM_DSI3_DIGITAL		62
-#define CLK_MM_NR_CLK			63
+#define CLK_MM_DISP_PWM2_MM		63
+#define CLK_MM_DISP_PWM2_26M		64
+#define CLK_MM_NR_CLK			65
 
 /* IMGSYS */
 
