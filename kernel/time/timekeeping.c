@@ -1792,6 +1792,13 @@ void timekeeping_resume(void)
 	u64 cycle_now, nsec;
 	bool inject_sleeptime = false;
 
+	/*
+	 * MediaTek s2idle resumes syscore before the cpuidle core unfreezes
+	 * the tick. Do not account the same suspend interval a second time.
+	 */
+	if (!timekeeping_suspended)
+		return;
+
 	read_persistent_clock64(&ts_new);
 
 	clockevents_resume();
