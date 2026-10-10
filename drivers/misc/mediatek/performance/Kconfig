@@ -1,0 +1,114 @@
+config MTK_FPSGO_V3
+	bool "Support FPSGO_V3 framework"
+	depends on CPU_FREQ && UCLAMP_TASK_GROUP
+	help
+	  Support FPSGO_V3 framework for most FPS performance and
+	  low power balance. As a perquisite to ensure FPS performance,
+	  FPSGO_V3 persuades lowest power consumption for better DoU
+	  endurance and gaming experience.
+	  FPSGO_V3 include AI performance and low power.
+	  If you are not sure about this, set n.
+
+config MTK_GBE
+	bool "MediaTek Game Boost Engine"
+	depends on MTK_FPSGO_V3
+	help
+	  Enable the Game Boost Engine interfaces used by Ruby's stock
+	  performance stack.
+
+config MTK_PERF_OBSERVER
+	bool "MediaTek performance observer"
+	depends on MTK_PERFORMANCE_MODULE
+	help
+	  Provide the stock Ruby performance notifier interfaces.
+
+config MTK_RESYM
+	bool "MediaTek resource symphony"
+	depends on MTK_PERF_OBSERVER
+	help
+	  Provide the stock Ruby resource usage and state interfaces.
+
+config MTK_RUBY_SCHED_PREFER
+	bool "Ruby scheduler CPU preference control"
+	depends on MTK_PERFORMANCE_MODULE && ARM64 && SMP && UCLAMP_TASK_GROUP && !MTK_SCHED_EXTENSION
+	default y if MACH_MT6877
+	help
+	  Restore Ruby's sched_boost and per-task CPU preference controls
+	  during Linux 6.6 fair and real-time task placement. A preference
+	  searches the allowed CPU capacity classes in priority order for an
+	  idle CPU. It does not change task affinity or CPU frequency limits.
+
+config MTK_RUBY_BIG_TASK_ROTATION
+	bool "Ruby big task rotation on Linux 6.6"
+	depends on MTK_RUBY_SCHED_PREFER && ANDROID_VENDOR_HOOKS && UCLAMP_TASK_GROUP
+	default y if MACH_MT6877
+	help
+	  Restore Ruby's misfit-task rotation control. When several CPUs
+	  have misfit tasks, a slow CPU may exchange its running task with
+	  a single running task on a faster CPU after a minimum run time.
+
+config MTK_RUBY_SCHED_LB_ENHANCEMENT
+	bool "Ruby same-capacity load balancing with energy scheduling"
+	depends on MTK_RUBY_SCHED_PREFER && ENERGY_MODEL
+	default y if MACH_MT6877
+	help
+	  Keep load balancing active between CPUs of the same capacity class
+	  when energy-aware scheduling would otherwise skip a balanced domain.
+
+config MTK_RUBY_SCHED_INTEROP
+	bool "Ruby real-time and fair scheduler interop"
+	depends on MTK_RUBY_SCHED_PREFER && SMP
+	default y if MACH_MT6877
+	help
+	  Prefer an eligible idle CPU for a waking real-time task and avoid
+	  charging stale real-time utilization against fair-task capacity.
+
+config MTK_RUBY_IDLE_BALANCE_ENHANCEMENT
+	bool "Ruby aggressive queued-task idle pull"
+	depends on MTK_RUBY_SCHED_PREFER && SMP
+	default y if MACH_MT6877
+	help
+	  When ordinary newly-idle balancing finds no task, pull a queued
+	  task with an idle preference or a minimum-capacity mismatch from
+	  another CPU, subject to the 6.6 migration checks.
+
+
+config MTK_FRS
+	tristate "Mediatek Frame Rate Smoother"
+	depends on MTK_FPSGO_V3
+	help
+	  Support Frame Rate Smoother kernel intergface. It will adjustment
+	  target fps by thermal.
+	  If you are not sure about this, set n.
+
+config MTK_LOAD_TRACKER
+	tristate "CPU Loading Tracking Service"
+	depends on CPU_FREQ
+	default n
+	help
+	  MTK_LOAD_TRACKER is the kernel config of CPU Loading Tracking
+	  Service designed by MTK, which is a service to get CPU Loading
+	  information. User can register callback and config polling
+	  duration to get CPU loading.
+
+config MTK_CPU_CTRL_CFP
+	bool "MediaTek CPU ceiling relief under high load"
+	depends on MTK_LOAD_TRACKER && CPU_FREQ && MACH_MT6877
+	help
+	  Restore Ruby's ceiling fool proof control. The MT6877 CPU
+	  controller raises a requested frequency ceiling by configurable
+	  OPP steps while measured load stays high, using cpufreq QoS.
+
+config MTK_LOAD_TRACKER_DEBUG
+	tristate "CPU Loading Tracking Service"
+	help
+	  MTK_LOAD_TRACKER_DEBUG is the kernel debug config of CPU Loading
+	  Tracking Service designed by MTK. Use can use it to avoid print
+	  trace log on use load.
+	  Default it enable on eng, userdebug load.
+
+config MTK_PERF_IOCTL_MAGT
+	tristate "Mediatek Adaptive Gaming Technology"
+	help
+	  Support MAGT analysis performance.
+          If you are not sure about this, set n.
