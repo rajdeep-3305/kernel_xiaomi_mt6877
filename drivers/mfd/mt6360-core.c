@@ -66,14 +66,14 @@ struct mt6360_ddata {
 #define MT6360_CRC_I2C_ADDR_SIZE	1
 #define MT6360_CRC_REG_ADDR_SIZE	1
 /* prealloca read size = i2c device addr + i2c reg addr + val ... + crc8 */
-#define MT6360_ALLOC_READ_SIZE(_size)	(_size + 3)
+#define MT6360_ALLOC_READ_SIZE(_size)	((_size) + 3)
 /* prealloca write size = i2c device addr + i2c reg addr + val ... + crc8 + dummy byte */
-#define MT6360_ALLOC_WRITE_SIZE(_size)	(_size + 4)
+#define MT6360_ALLOC_WRITE_SIZE(_size)	((_size) + 4)
 #define MT6360_CRC_PREDATA_OFFSET	(MT6360_CRC_I2C_ADDR_SIZE + MT6360_CRC_REG_ADDR_SIZE)
 #define MT6360_CRC_CRC8_SIZE		1
 #define MT6360_CRC_DUMMY_BYTE_SIZE	1
 #define MT6360_REGMAP_REG_BYTE_SIZE	2
-#define I2C_ADDR_XLATE_8BIT(_addr, _rw)	(((_addr & 0x7F) << 1) + _rw)
+#define I2C_ADDR_XLATE_8BIT(_addr, _rw)	((((_addr) & 0x7F) << 1) + (_rw))
 
 /* reg 0 -> 0 ~ 7 */
 #define MT6360_CHG_TREG_EVT		4
@@ -285,12 +285,16 @@ static const struct resource mt6360_adc_resources[] = {
 
 static const struct resource mt6360_chg_resources[] = {
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_TREG_EVT, "chg_treg_evt"),
+	DEFINE_RES_IRQ_NAMED(MT6360_CHG_MIVR_EVT, "chg_mivr_evt"),
 	DEFINE_RES_IRQ_NAMED(MT6360_PWR_RDY_EVT, "pwr_rdy_evt"),
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_BATSYSUV_EVT, "chg_batsysuv_evt"),
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_VSYSUV_EVT, "chg_vsysuv_evt"),
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_VSYSOV_EVT, "chg_vsysov_evt"),
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_VBATOV_EVT, "chg_vbatov_evt"),
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_VBUSOV_EVT, "chg_vbusov_evt"),
+	DEFINE_RES_IRQ_NAMED(MT6360_WD_PMU_DET, "wd_pmu_det"),
+	DEFINE_RES_IRQ_NAMED(MT6360_WD_PMU_DONE, "wd_pmu_done"),
+	DEFINE_RES_IRQ_NAMED(MT6360_CHG_TMRI, "chg_tmri"),
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_AICCMEASL, "chg_aiccmeasl"),
 	DEFINE_RES_IRQ_NAMED(MT6360_WDTMRI, "wdtmri"),
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_RECHGI, "chg_rechgi"),
@@ -298,6 +302,8 @@ static const struct resource mt6360_chg_resources[] = {
 	DEFINE_RES_IRQ_NAMED(MT6360_CHG_IEOCI, "chg_ieoci"),
 	DEFINE_RES_IRQ_NAMED(MT6360_PUMPX_DONEI, "pumpx_donei"),
 	DEFINE_RES_IRQ_NAMED(MT6360_ATTACH_I, "attach_i"),
+	DEFINE_RES_IRQ_NAMED(MT6360_HVDCP_DET, "hvdcp_det"),
+	DEFINE_RES_IRQ_NAMED(MT6360_DCDTI, "dcdti"),
 	DEFINE_RES_IRQ_NAMED(MT6360_CHRDET_EXT_EVT, "chrdet_ext_evt"),
 };
 
@@ -341,8 +347,6 @@ static const struct mfd_cell mt6360_devs[] = {
 	MFD_CELL_OF("mt6360-led", mt6360_led_resources,
 		    NULL, 0, 0, "mediatek,mt6360-led"),
 	MFD_CELL_RES("mt6360-regulator", mt6360_regulator_resources),
-	MFD_CELL_OF("mt6360-tcpc", NULL,
-		    NULL, 0, 0, "mediatek,mt6360-tcpc"),
 };
 
 static int mt6360_check_vendor_info(struct mt6360_ddata *ddata)
@@ -432,9 +436,9 @@ static int mt6360_regmap_read(void *context, const void *reg, size_t reg_size,
 
 	ret = i2c_smbus_read_i2c_block_data(i2c, reg_addr, read_size,
 					    buf + MT6360_CRC_PREDATA_OFFSET);
-	if (ret < 0)
+	if (ret < 0) {
 		goto out;
-	else if (ret != read_size) {
+	} else if (ret != read_size) {
 		ret = -EIO;
 		goto out;
 	}
@@ -510,7 +514,7 @@ static bool mt6360_is_readwrite_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
 	case MT6360_REG_TCPCSTART ... MT6360_REG_TCPCEND:
-		fallthrough;
+		return false;
 	case MT6360_REG_PMICSTART ... MT6360_REG_PMICEND:
 		fallthrough;
 	case MT6360_REG_LDOSTART ... MT6360_REG_LDOEND:
@@ -543,7 +547,10 @@ static int mt6360_probe(struct i2c_client *client)
 	ddata->dev = &client->dev;
 	i2c_set_clientdata(client, ddata);
 
-	for (i = 0; i < MT6360_SLAVE_MAX - 1; i++) {
+	/* Ruby uses the standalone MediaTek TCPC driver at 0x4e. */
+	ddata->i2c[MT6360_SLAVE_TCPC] = NULL;
+
+	for (i = MT6360_SLAVE_PMIC; i < MT6360_SLAVE_MAX - 1; i++) {
 		ddata->i2c[i] = devm_i2c_new_dummy_device(&client->dev,
 							  client->adapter,
 							  mt6360_slave_addr[i]);
@@ -629,4 +636,4 @@ module_i2c_driver(mt6360_driver);
 
 MODULE_AUTHOR("Gene Chen <gene_chen@richtek.com>");
 MODULE_DESCRIPTION("MT6360 I2C Driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
