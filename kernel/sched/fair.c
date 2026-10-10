@@ -56,6 +56,7 @@
 #include "sched.h"
 #include "stats.h"
 #include "autogroup.h"
+#include "ruby_prefer.h"
 
 #include <trace/hooks/sched.h>
 #include <trace/hooks/dtask.h>
@@ -8094,6 +8095,14 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu, int sy
 			if (!cpumask_test_cpu(cpu, p->cpus_ptr))
 				continue;
 
+#ifdef CONFIG_MTK_RUBY_SCHED_INTEROP
+			/* Stock Ruby avoids placing a fair wakeup behind a runnable
+			 * RT task, even before utilization filtering.
+			 */
+			if (rt_rq_is_runnable(&rq->rt))
+				continue;
+#endif
+
 			util = cpu_util(cpu, p, cpu, 0);
 			cpu_cap = capacity_of(cpu);
 
@@ -8299,6 +8308,14 @@ select_task_rq_fair(struct task_struct *p, int prev_cpu, int wake_flags)
 
 	return new_cpu;
 }
+
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+static int ruby_select_task_rq_fair(struct task_struct *p, int prev_cpu,
+				    int wake_flags)
+{
+	return ruby_prefer_cpu(p, select_task_rq_fair(p, prev_cpu, wake_flags));
+}
+#endif
 
 /*
  * Called immediately before a task is migrated to a new CPU; task_cpu(p) and
@@ -9343,6 +9360,242 @@ static void attach_one_task(struct rq *rq, struct task_struct *p)
 	rq_unlock(rq, &rf);
 }
 
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+#define RUBY_PULL_REQUIRE_UCLAMP_MIN	BIT(0)
+#define RUBY_PULL_REQUIRE_MISFIT	BIT(1)
+
+struct ruby_idle_pull_work {
+	struct cpu_stop_work stop_work;
+	struct task_struct *task;
+	atomic_t busy;
+	int src_cpu;
+	int dst_cpu;
+	unsigned int flags;
+};
+
+static DEFINE_PER_CPU(struct ruby_idle_pull_work, ruby_idle_pull_work);
+
+static int ruby_idle_pull_cpu_stop(void *data)
+{
+	struct ruby_idle_pull_work *work = data;
+	struct task_struct *p = work->task;
+	struct rq *rq = this_rq();
+	struct rq *dst_rq = cpu_rq(work->dst_cpu);
+	struct rq_flags rf;
+
+	raw_spin_lock_irq(&p->pi_lock);
+	rq_lock(rq, &rf);
+	if (rq->cpu == work->src_cpu && task_rq(p) == rq &&
+	    task_on_rq_queued(p) &&
+	    p->sched_class == &fair_sched_class &&
+	    !is_migration_disabled(p) &&
+	    cpu_active(rq->cpu) && cpu_active(work->dst_cpu) &&
+	    capacity_orig_of(work->dst_cpu) > capacity_orig_of(rq->cpu) &&
+	    (!(work->flags & RUBY_PULL_REQUIRE_UCLAMP_MIN) ||
+	     uclamp_eff_value(p, UCLAMP_MIN) >= capacity_orig_of(rq->cpu)) &&
+	    (!(work->flags & RUBY_PULL_REQUIRE_MISFIT) ||
+	     !task_fits_cpu(p, rq->cpu)) &&
+	    task_fits_cpu(p, work->dst_cpu) &&
+	    cpumask_test_cpu(work->dst_cpu, p->cpus_ptr) &&
+	    sched_core_cookie_match(dst_rq, p)) {
+		update_rq_clock(rq);
+		rq = __migrate_task(rq, &rf, p, work->dst_cpu);
+	}
+	rq_unlock(rq, &rf);
+	raw_spin_unlock_irq(&p->pi_lock);
+
+	put_task_struct(p);
+	atomic_xchg(&work->busy, 0);
+	return 0;
+}
+
+static int ruby_queue_running_task(struct task_struct *p, int src_cpu,
+				   int dst_cpu, unsigned int flags)
+{
+	struct ruby_idle_pull_work *work;
+	struct rq *src_rq = cpu_rq(src_cpu);
+	struct rq_flags rf;
+
+	if (src_cpu == dst_cpu || !cpu_active(src_cpu) ||
+	    !cpu_active(dst_cpu))
+		return 0;
+
+	work = &per_cpu(ruby_idle_pull_work, src_cpu);
+	if (atomic_read(&work->busy))
+		return 0;
+
+	rq_lock(src_rq, &rf);
+	if (src_rq->curr != p || p->sched_class != &fair_sched_class ||
+	    !task_on_rq_queued(p) || is_migration_disabled(p) ||
+	    capacity_orig_of(dst_cpu) <= capacity_orig_of(src_cpu) ||
+	    !cpumask_test_cpu(dst_cpu, p->cpus_ptr) ||
+	    !sched_core_cookie_match(cpu_rq(dst_cpu), p) ||
+	    atomic_cmpxchg(&work->busy, 0, 1)) {
+		rq_unlock(src_rq, &rf);
+		return 0;
+	}
+
+	get_task_struct(p);
+	work->task = p;
+	work->src_cpu = src_cpu;
+	work->dst_cpu = dst_cpu;
+	work->flags = flags;
+	rq_unlock(src_rq, &rf);
+
+	preempt_disable();
+	if (stop_one_cpu_nowait(src_cpu, ruby_idle_pull_cpu_stop,
+				work, &work->stop_work)) {
+		preempt_enable();
+		return 1;
+	}
+	preempt_enable();
+	put_task_struct(p);
+	atomic_xchg(&work->busy, 0);
+	return 0;
+}
+
+#ifdef CONFIG_MTK_RUBY_IDLE_BALANCE_ENHANCEMENT
+static int ruby_idle_pull_running(struct rq *dst_rq)
+{
+	int src_cpu, dst_cpu = dst_rq->cpu;
+
+	for_each_online_cpu(src_cpu) {
+		struct task_struct *p = READ_ONCE(cpu_rq(src_cpu)->curr);
+
+		if (ruby_queue_running_task(p, src_cpu, dst_cpu,
+					RUBY_PULL_REQUIRE_UCLAMP_MIN))
+			return 1;
+	}
+
+	return 0;
+}
+#endif
+
+int ruby_migrate_misfit(struct rq *src_rq, struct task_struct *p)
+{
+	int src_cpu = cpu_of(src_rq), cpu, target = -1;
+	unsigned long target_capacity = ULONG_MAX;
+
+	if (!p || !cpu_active(src_cpu) ||
+	    p->sched_class != &fair_sched_class ||
+	    p->nr_cpus_allowed == 1 || !src_rq->misfit_task_load ||
+	    READ_ONCE(src_rq->rd->overutilized))
+		return 0;
+
+	for_each_online_cpu(cpu) {
+		unsigned long capacity;
+
+		if (cpu == src_cpu || !cpu_active(cpu) ||
+		    !cpumask_test_cpu(cpu, p->cpus_ptr) ||
+		    !available_idle_cpu(cpu) || !sched_core_cookie_match(cpu_rq(cpu), p) ||
+		    !task_fits_cpu(p, cpu))
+			continue;
+
+		capacity = capacity_orig_of(cpu);
+		if (capacity <= capacity_orig_of(src_cpu) ||
+		    capacity >= target_capacity)
+			continue;
+		target_capacity = capacity;
+		target = cpu;
+	}
+
+	if (target < 0)
+		return 0;
+
+	return ruby_queue_running_task(p, src_cpu, target,
+					RUBY_PULL_REQUIRE_MISFIT);
+}
+EXPORT_SYMBOL_GPL(ruby_migrate_misfit);
+
+#ifdef CONFIG_MTK_RUBY_IDLE_BALANCE_ENHANCEMENT
+static int ruby_idle_pull_queued(struct rq *dst_rq)
+{
+	int pass, src_cpu, dst_cpu = dst_rq->cpu;
+	unsigned long dst_capacity = capacity_orig_of(dst_cpu);
+
+	/* Stock checks at most five runnable candidates per source CPU. Visit
+	 * faster capacity classes first within each priority pass.
+	 */
+	for (pass = 0; pass < 2; pass++) {
+		unsigned long limit = ULONG_MAX;
+
+		for (;;) {
+			unsigned long capacity = 0;
+
+			for_each_online_cpu(src_cpu) {
+				unsigned long source = capacity_orig_of(src_cpu);
+
+				if (src_cpu == dst_cpu || !cpu_active(src_cpu) ||
+				    source >= limit ||
+				    (pass == 0 && source >= dst_capacity))
+					continue;
+				capacity = max(capacity, source);
+			}
+			if (!capacity)
+				break;
+
+			for_each_online_cpu(src_cpu) {
+				struct rq *src_rq = cpu_rq(src_cpu);
+				struct rq_flags rf;
+				struct task_struct *p, *picked = NULL;
+				struct lb_env env = {
+					.src_rq = src_rq,
+					.src_cpu = src_cpu,
+					.dst_cpu = dst_cpu,
+					.dst_rq = dst_rq,
+					.idle = CPU_NEWLY_IDLE,
+					.flags = LBF_ACTIVE_LB,
+					.src_rq_rf = &rf,
+				};
+				unsigned long src_capacity;
+				int scanned = 0;
+
+				if (src_cpu == dst_cpu || !cpu_active(src_cpu) ||
+				    capacity_orig_of(src_cpu) != capacity)
+					continue;
+
+				src_capacity = capacity_orig_of(src_cpu);
+				rq_lock(src_rq, &rf);
+				update_rq_clock(src_rq);
+				list_for_each_entry_reverse(p, &src_rq->cfs_tasks,
+							    se.group_node) {
+					if (scanned++ >= 5)
+						break;
+					if (!task_on_rq_queued(p) ||
+					    task_on_cpu(src_rq, p))
+						continue;
+					if (pass == 0) {
+						if (uclamp_eff_value(p, UCLAMP_MIN) <
+						    src_capacity)
+							continue;
+					} else if (!READ_ONCE(task_group(p)->ruby_prefer_idle) ||
+						   src_rq->nr_running <= 1) {
+						continue;
+					}
+					if (!sched_core_cookie_match(dst_rq, p) ||
+					    !can_migrate_task(p, &env))
+						continue;
+
+					detach_task(p, &env);
+					picked = p;
+					break;
+				}
+				rq_unlock(src_rq, &rf);
+
+				if (picked) {
+					attach_one_task(dst_rq, picked);
+					return 1;
+				}
+			}
+			limit = capacity;
+		}
+	}
+
+	return ruby_idle_pull_running(dst_rq);
+}
+#endif
+#endif /* CONFIG_MTK_RUBY_SCHED_PREFER */
+
 /*
  * attach_tasks() -- attaches all tasks detached by detach_tasks() to their
  * new rq.
@@ -9653,6 +9906,13 @@ static unsigned long scale_rt_capacity(int cpu)
 	 * average uses the actual delta max capacity(load).
 	 */
 	used = READ_ONCE(rq->avg_rt.util_avg);
+#ifdef CONFIG_MTK_RUBY_SCHED_INTEROP
+	/* Stock Ruby does not reserve capacity for sleeping or throttled RT
+	 * work. rt_rq_is_runnable() also handles boosted RT group semantics.
+	 */
+	if (!rt_rq_is_runnable(&rq->rt))
+		used = 0;
+#endif
 	used += READ_ONCE(rq->avg_dl.util_avg);
 	used += thermal_load_avg(rq);
 
@@ -10022,6 +10282,18 @@ sched_reduced_capacity(struct rq *rq, struct sched_domain *sd)
  * @sgs: variable to hold the statistics for this group.
  * @sg_status: Holds flag indicating the status of the sched_group
  */
+#ifdef CONFIG_MTK_RUBY_SCHED_INTEROP
+#define RUBY_RT_LOAD (2UL * 1023 * NICE_0_LOAD)
+
+static unsigned long ruby_rt_load(struct rq *rq)
+{
+	if (!rt_rq_is_runnable(&rq->rt))
+		return 0;
+
+	return READ_ONCE(rq->rt.rt_nr_running) * RUBY_RT_LOAD;
+}
+#endif
+
 static inline void update_sg_lb_stats(struct lb_env *env,
 				      struct sd_lb_stats *sds,
 				      struct sched_group *group,
@@ -10037,6 +10309,10 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 	for_each_cpu_and(i, sched_group_span(group), env->cpus) {
 		struct rq *rq = cpu_rq(i);
 		unsigned long load = cpu_load(rq);
+
+#ifdef CONFIG_MTK_RUBY_SCHED_INTEROP
+		load += ruby_rt_load(rq);
+#endif
 
 		sgs->group_load += load;
 		sgs->group_util += cpu_util_cfs(i);
@@ -11018,9 +11294,21 @@ static struct sched_group *find_busiest_group(struct lb_env *env)
 
 		trace_android_rvh_find_busiest_group(sds.busiest, env->dst_rq,
 					&out_balance);
+#ifdef CONFIG_MTK_RUBY_SCHED_LB_ENHANCEMENT
+		/* Stock Ruby still balances within one performance domain even
+		 * when energy-aware scheduling suppresses inter-domain balance.
+		 */
+		if (capacity_orig_of(env->dst_cpu) !=
+		    capacity_orig_of(cpumask_first(sched_group_span(sds.busiest)))) {
+			if (rcu_dereference(rd->pd) && !READ_ONCE(rd->overutilized)
+			    && out_balance)
+				goto out_balanced;
+		}
+#else
 		if (rcu_dereference(rd->pd) && !READ_ONCE(rd->overutilized)
 					&& out_balance)
 			goto out_balanced;
+#endif
 	}
 
 	/* ASYM feature bypasses nice load balance check */
@@ -11215,8 +11503,15 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 			 * which is not scaled with the CPU capacity.
 			 */
 			load = cpu_load(rq);
+#ifdef CONFIG_MTK_RUBY_SCHED_INTEROP
+			load += ruby_rt_load(rq);
+#endif
 
-			if (nr_running == 1 && load > env->imbalance &&
+			if (nr_running == 1
+#ifdef CONFIG_MTK_RUBY_SCHED_INTEROP
+			    && rq->nr_running == 1
+#endif
+			    && load > env->imbalance &&
 			    !check_cpu_capacity(rq, env->sd))
 				break;
 
@@ -12510,8 +12805,18 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 		goto out;
 	}
 
-	if (!READ_ONCE(this_rq->rd->overload) ||
-	    this_rq->avg_idle < sd->max_newidle_lb_cost) {
+	if (!READ_ONCE(this_rq->rd->overload)) {
+		update_next_balance(sd, &next_balance);
+		rcu_read_unlock();
+#ifdef CONFIG_MTK_RUBY_IDLE_BALANCE_ENHANCEMENT
+		raw_spin_rq_unlock(this_rq);
+		goto hinted_idle_pull;
+#else
+		goto out;
+#endif
+	}
+
+	if (this_rq->avg_idle < sd->max_newidle_lb_cost) {
 		update_next_balance(sd, &next_balance);
 		rcu_read_unlock();
 		goto out;
@@ -12556,6 +12861,13 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 			break;
 	}
 	rcu_read_unlock();
+
+#ifdef CONFIG_MTK_RUBY_IDLE_BALANCE_ENHANCEMENT
+hinted_idle_pull:
+	if (!pulled_task && !READ_ONCE(this_rq->nr_running) &&
+	    !READ_ONCE(this_rq->ttwu_pending))
+		pulled_task = ruby_idle_pull_queued(this_rq);
+#endif
 
 	raw_spin_rq_lock(this_rq);
 
@@ -13319,7 +13631,11 @@ DEFINE_SCHED_CLASS(fair) = {
 #ifdef CONFIG_SMP
 	.balance		= balance_fair,
 	.pick_task		= pick_task_fair,
+#ifdef CONFIG_MTK_RUBY_SCHED_PREFER
+	.select_task_rq		= ruby_select_task_rq_fair,
+#else
 	.select_task_rq		= select_task_rq_fair,
+#endif
 	.migrate_task_rq	= migrate_task_rq_fair,
 
 	.rq_online		= rq_online_fair,
