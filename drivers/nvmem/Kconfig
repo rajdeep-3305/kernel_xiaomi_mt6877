@@ -418,3 +418,25 @@ config NVMEM_QORIQ_EFUSE
 	  will be called nvmem_qoriq_efuse.
 
 endif
+
+config MTK_DEVINFO
+	tristate "Mediatek SoCs device information support"
+	depends on ARCH_MEDIATEK || COMPILE_TEST
+	depends on HAS_IOMEM
+	help
+	  This is a driver to access SOC related non-volatile data like
+	  calibration data, FAB information etc.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called devinfo-mtk.
+
+config MT6359_EFUSE
+	tristate "MediaTek MT6359 PMIC eFuse support"
+	depends on MFD_MT6358 || MFD_MT6397 || COMPILE_TEST
+	help
+	  Enable access to the factory eFuse data in the MT6357 and MT6359
+	  PMICs. The audio codec uses this data for headphone calibration.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called nvmem-mt6359-efuse.
+
