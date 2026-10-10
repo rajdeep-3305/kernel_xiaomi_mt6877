@@ -15,6 +15,14 @@
 
 #include <dt-bindings/regulator/mediatek,mt6360-regulator.h>
 
+#define MT6360_REG_BUCK1_SEQOFFDLY	0x107
+#define MT6360_REG_LDO5CTRL0		0x20c
+
+#define MT6360_MASK_SDCARD_HLACT	BIT(7)
+#define MT6360_MASK_SDCARD_DET_EN	BIT(6)
+
+#define MT6360_NUM_PWROFF_CHAN		4
+
 enum {
 	MT6360_REGULATOR_BUCK1 = 0,
 	MT6360_REGULATOR_BUCK2,
@@ -45,6 +53,9 @@ struct mt6360_regulator_desc {
 struct mt6360_regulator_data {
 	struct device *dev;
 	struct regmap *regmap;
+	u8 pwr_off_seq[MT6360_NUM_PWROFF_CHAN];
+	bool sdcard_det_en;
+	bool sdcard_hlact;
 };
 
 static irqreturn_t mt6360_pgb_event_handler(int irq, void *data)
@@ -217,6 +228,46 @@ static const struct linear_range ldo_vout_ranges3[] = {
 	REGULATOR_LINEAR_RANGE(3600000, 0x7a, 0x7f, 0),
 };
 
+static int mt6360_regulator_enable(struct regulator_dev *rdev)
+{
+	struct mt6360_regulator_data *mrd = rdev_get_drvdata(rdev);
+	struct regmap *regmap = rdev_get_regmap(rdev);
+	int ret;
+
+	if (rdev_get_id(rdev) == MT6360_REGULATOR_LDO5 &&
+	    mrd->sdcard_det_en) {
+		ret = regmap_update_bits(regmap, MT6360_REG_LDO5CTRL0,
+					 MT6360_MASK_SDCARD_HLACT,
+					 mrd->sdcard_hlact ?
+					 MT6360_MASK_SDCARD_HLACT : 0);
+		if (ret)
+			return ret;
+
+		ret = regmap_update_bits(regmap, MT6360_REG_LDO5CTRL0,
+					 MT6360_MASK_SDCARD_DET_EN,
+					 MT6360_MASK_SDCARD_DET_EN);
+		if (ret)
+			return ret;
+	}
+
+	return regulator_enable_regmap(rdev);
+}
+
+static int mt6360_regulator_disable(struct regulator_dev *rdev)
+{
+	struct mt6360_regulator_data *mrd = rdev_get_drvdata(rdev);
+	struct regmap *regmap = rdev_get_regmap(rdev);
+	int ret;
+
+	ret = regulator_disable_regmap(rdev);
+	if (ret || rdev_get_id(rdev) != MT6360_REGULATOR_LDO5 ||
+	    !mrd->sdcard_det_en)
+		return ret;
+
+	return regmap_update_bits(regmap, MT6360_REG_LDO5CTRL0,
+				  MT6360_MASK_SDCARD_DET_EN, 0);
+}
+
 static int mt6360_regulator_set_mode(struct regulator_dev *rdev,
 				     unsigned int mode)
 {
@@ -295,8 +346,8 @@ static int mt6360_regulator_get_status(struct regulator_dev *rdev)
 
 static const struct regulator_ops mt6360_regulator_ops = {
 	.list_voltage = regulator_list_voltage_linear_range,
-	.enable = regulator_enable_regmap,
-	.disable = regulator_disable_regmap,
+	.enable = mt6360_regulator_enable,
+	.disable = mt6360_regulator_disable,
 	.is_enabled = regulator_is_enabled_regmap,
 	.set_voltage_sel = regulator_set_voltage_sel_regmap,
 	.get_voltage_sel = regulator_get_voltage_sel_regmap,
@@ -406,6 +457,8 @@ static int mt6360_regulator_probe(struct platform_device *pdev)
 {
 	struct mt6360_regulator_data *mrd;
 	struct regulator_config config = {};
+	struct device_node *np;
+	u32 val;
 	int i, ret;
 
 	mrd = devm_kzalloc(&pdev->dev, sizeof(*mrd), GFP_KERNEL);
@@ -413,11 +466,30 @@ static int mt6360_regulator_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	mrd->dev = &pdev->dev;
+	mrd->sdcard_det_en = true;
+	mrd->sdcard_hlact = true;
+	mrd->pwr_off_seq[0] = 0x06;
+	mrd->pwr_off_seq[1] = 0x04;
+	mrd->pwr_off_seq[2] = 0x00;
+	mrd->pwr_off_seq[3] = 0x02;
+	platform_set_drvdata(pdev, mrd);
 
 	mrd->regmap = dev_get_regmap(pdev->dev.parent, NULL);
 	if (!mrd->regmap) {
 		dev_err(&pdev->dev, "Failed to get parent regmap\n");
 		return -ENODEV;
+	}
+
+	np = of_get_child_by_name(pdev->dev.parent->of_node, "regulator");
+	if (np) {
+		of_property_read_u8_array(np, "pwr-off-seq",
+					  mrd->pwr_off_seq,
+					  MT6360_NUM_PWROFF_CHAN);
+		if (!of_property_read_u32(np, "sdcard-det-en", &val))
+			mrd->sdcard_det_en = val;
+		if (!of_property_read_u32(np, "sdcard-hlact", &val))
+			mrd->sdcard_hlact = val;
+		of_node_put(np);
 	}
 
 	config.dev = pdev->dev.parent;
@@ -445,6 +517,14 @@ static int mt6360_regulator_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static void mt6360_regulator_shutdown(struct platform_device *pdev)
+{
+	struct mt6360_regulator_data *mrd = platform_get_drvdata(pdev);
+
+	regmap_bulk_write(mrd->regmap, MT6360_REG_BUCK1_SEQOFFDLY,
+			  mrd->pwr_off_seq, MT6360_NUM_PWROFF_CHAN);
+}
+
 static const struct platform_device_id mt6360_regulator_id_table[] = {
 	{ "mt6360-regulator", 0 },
 	{},
@@ -457,10 +537,11 @@ static struct platform_driver mt6360_regulator_driver = {
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
 	.probe = mt6360_regulator_probe,
+	.shutdown = mt6360_regulator_shutdown,
 	.id_table = mt6360_regulator_id_table,
 };
 module_platform_driver(mt6360_regulator_driver);
 
 MODULE_AUTHOR("Gene Chen <gene_chen@richtek.com>");
 MODULE_DESCRIPTION("MT6360 Regulator Driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
