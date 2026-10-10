@@ -9,6 +9,7 @@
 
 #include <linux/ctype.h>
 #include <linux/string.h>
+#include <sound/soc.h>
 
 #define ACCDET_DEVNAME "accdet"
 
@@ -102,8 +103,10 @@ struct dts_data {
 
 struct mt6359_accdet {
 	struct snd_soc_jack *jack;
+	struct snd_soc_jack headset_jack;
 	struct device *dev;
 	struct regmap *regmap;
+	struct iio_channel *accdet_auxadc;
 	struct dts_data *data;
 	unsigned int caps;
 	int accdet_irq;
@@ -126,10 +129,16 @@ struct mt6359_accdet {
 #if IS_ENABLED(CONFIG_SND_SOC_MT6359_ACCDET)
 int mt6359_accdet_enable_jack_detect(struct snd_soc_component *component,
 				     struct snd_soc_jack *jack);
+int mt6359_accdet_init_jack(struct snd_soc_card *card);
 #else
 static inline int
 mt6359_accdet_enable_jack_detect(struct snd_soc_component *component,
 				 struct snd_soc_jack *jack)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int mt6359_accdet_init_jack(struct snd_soc_card *card)
 {
 	return -EOPNOTSUPP;
 }

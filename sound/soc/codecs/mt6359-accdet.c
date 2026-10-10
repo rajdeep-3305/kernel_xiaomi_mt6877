@@ -21,12 +21,13 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/init.h>
+#include <linux/iio/consumer.h>
 #include <linux/irqdomain.h>
 #include <linux/irq.h>
 #include <linux/regmap.h>
 #include <sound/soc.h>
 #include <sound/jack.h>
-#include <linux/mfd/mt6397/core.h>
+#include <linux/mfd/mt6358/core.h>
 
 #include "mt6359-accdet.h"
 #include "mt6359.h"
@@ -57,6 +58,7 @@
 
 static struct platform_driver mt6359_accdet_driver;
 static const struct snd_soc_component_driver mt6359_accdet_soc_driver;
+static struct mt6359_accdet *mt6359_accdet_data;
 
 /* local function declaration */
 static void accdet_set_debounce(struct mt6359_accdet *priv, int state,
@@ -331,6 +333,23 @@ static void mt6359_accdet_jack_report(struct mt6359_accdet *priv)
 	snd_soc_jack_report(priv->jack, report, MT6359_ACCDET_JACK_MASK);
 }
 
+static int mt6359_accdet_read_auxadc(struct mt6359_accdet *priv)
+{
+	int voltage;
+	int ret;
+
+	ret = iio_read_channel_processed(priv->accdet_auxadc, &voltage);
+	if (ret < 0) {
+		dev_warn_ratelimited(priv->dev,
+				     "failed to read ACCDET AUXADC: %d\n", ret);
+		return ret;
+	}
+
+	priv->cali_voltage = voltage;
+
+	return 0;
+}
+
 static unsigned int check_button(struct mt6359_accdet *priv, unsigned int v)
 {
 	if (priv->caps & ACCDET_FOUR_KEY) {
@@ -377,10 +396,14 @@ static inline void check_jack_btn_type(struct mt6359_accdet *priv)
 
 	switch (priv->accdet_status) {
 	case 0:
-		if (priv->jack_type == SND_JACK_HEADSET)
-			is_key_pressed(priv, true);
-		else
+		if (priv->jack_type == SND_JACK_HEADSET) {
+			if (!mt6359_accdet_read_auxadc(priv))
+				is_key_pressed(priv, true);
+			else
+				priv->btn_type = 0;
+		} else {
 			priv->jack_type = SND_JACK_HEADPHONE;
+		}
 		break;
 	case 1:
 		if (priv->jack_type == SND_JACK_HEADSET) {
@@ -923,10 +946,46 @@ int mt6359_accdet_enable_jack_detect(struct snd_soc_component *component,
 }
 EXPORT_SYMBOL_GPL(mt6359_accdet_enable_jack_detect);
 
+int mt6359_accdet_init_jack(struct snd_soc_card *card)
+{
+	struct mt6359_accdet *priv = mt6359_accdet_data;
+	int ret;
+
+	if (!priv)
+		return -EPROBE_DEFER;
+
+	ret = snd_soc_card_jack_new(card, "Headset Jack",
+				    MT6359_ACCDET_JACK_MASK,
+				    &priv->headset_jack);
+	if (ret)
+		return ret;
+
+	priv->headset_jack.jack->input_dev->id.bustype = BUS_HOST;
+	snd_jack_set_key(priv->headset_jack.jack, SND_JACK_BTN_0,
+			 KEY_PLAYPAUSE);
+	snd_jack_set_key(priv->headset_jack.jack, SND_JACK_BTN_1,
+			 KEY_VOLUMEDOWN);
+	snd_jack_set_key(priv->headset_jack.jack, SND_JACK_BTN_2,
+			 KEY_VOLUMEUP);
+	snd_jack_set_key(priv->headset_jack.jack, SND_JACK_BTN_3,
+			 KEY_VOICECOMMAND);
+
+	priv->jack = &priv->headset_jack;
+	mt6359_accdet_jack_report(priv);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mt6359_accdet_init_jack);
+
+static void mt6359_accdet_destroy_workqueue(void *data)
+{
+	destroy_workqueue(data);
+}
+
 static int mt6359_accdet_probe(struct platform_device *pdev)
 {
 	struct mt6359_accdet *priv;
-	struct mt6397_chip *mt6397 = dev_get_drvdata(pdev->dev.parent);
+	struct mt6358_chip *mt6358 = dev_get_drvdata(pdev->dev.parent);
 	int ret;
 
 	dev_dbg(&pdev->dev, "%s(), dev name %s\n",
@@ -948,7 +1007,10 @@ static int mt6359_accdet_probe(struct platform_device *pdev)
 	if (!priv->data->pwm_deb)
 		return -ENOMEM;
 
-	priv->regmap = mt6397->regmap;
+	if (!mt6358)
+		return -ENODEV;
+
+	priv->regmap = mt6358->regmap;
 	if (IS_ERR(priv->regmap)) {
 		ret = PTR_ERR(priv->regmap);
 		dev_err(&pdev->dev, "Failed to allocate register map: %d\n",
@@ -962,68 +1024,34 @@ static int mt6359_accdet_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to parse dts\n");
 		return ret;
 	}
+
+	priv->accdet_auxadc = devm_iio_channel_get(&pdev->dev,
+						   "pmic_accdet");
+	if (IS_ERR(priv->accdet_auxadc))
+		return dev_err_probe(&pdev->dev, PTR_ERR(priv->accdet_auxadc),
+				     "failed to get ACCDET AUXADC\n");
+
 	mutex_init(&priv->res_lock);
 
-	priv->accdet_irq = platform_get_irq(pdev, 0);
-	if (priv->accdet_irq >= 0) {
-		ret = devm_request_threaded_irq(&pdev->dev, priv->accdet_irq,
-						NULL, mt6359_accdet_irq,
-						IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
-						"ACCDET_IRQ", priv);
-		if (ret) {
-			dev_err(&pdev->dev,
-				"Failed to request IRQ: (%d)\n", ret);
-			return ret;
-		}
-	}
-
-	if (priv->caps & ACCDET_PMIC_EINT0) {
-		priv->accdet_eint0 = platform_get_irq(pdev, 1);
-		if (priv->accdet_eint0 >= 0) {
-			ret = devm_request_threaded_irq(&pdev->dev,
-							priv->accdet_eint0,
-							NULL, mt6359_accdet_irq,
-							IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
-							"ACCDET_EINT0", priv);
-			if (ret) {
-				dev_err(&pdev->dev,
-					"Failed to request eint0 IRQ (%d)\n",
-					ret);
-				return ret;
-			}
-		}
-	} else if (priv->caps & ACCDET_PMIC_EINT1) {
-		priv->accdet_eint1 = platform_get_irq(pdev, 2);
-		if (priv->accdet_eint1 >= 0) {
-			ret = devm_request_threaded_irq(&pdev->dev,
-							priv->accdet_eint1,
-							NULL, mt6359_accdet_irq,
-							IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
-							"ACCDET_EINT1", priv);
-			if (ret) {
-				dev_err(&pdev->dev,
-					"Failed to request eint1 IRQ (%d)\n",
-					ret);
-				return ret;
-			}
-		}
-	}
-
 	priv->accdet_workqueue = create_singlethread_workqueue("accdet");
+	if (!priv->accdet_workqueue)
+		return -ENOMEM;
+	ret = devm_add_action_or_reset(&pdev->dev,
+				       mt6359_accdet_destroy_workqueue,
+				       priv->accdet_workqueue);
+	if (ret)
+		return ret;
 	INIT_WORK(&priv->accdet_work, mt6359_accdet_work);
-	if (!priv->accdet_workqueue) {
-		dev_err(&pdev->dev, "Failed to create accdet workqueue\n");
-		ret = -1;
-		goto err_accdet_wq;
-	}
 
 	priv->jd_workqueue = create_singlethread_workqueue("mt6359_accdet_jd");
+	if (!priv->jd_workqueue)
+		return -ENOMEM;
+	ret = devm_add_action_or_reset(&pdev->dev,
+				       mt6359_accdet_destroy_workqueue,
+				       priv->jd_workqueue);
+	if (ret)
+		return ret;
 	INIT_WORK(&priv->jd_work, mt6359_accdet_jd_work);
-	if (!priv->jd_workqueue) {
-		dev_err(&pdev->dev, "Failed to create jack detect workqueue\n");
-		ret = -1;
-		goto err_eint_wq;
-	}
 
 	platform_set_drvdata(pdev, priv);
 	ret = devm_snd_soc_register_component(&pdev->dev,
@@ -1040,22 +1068,69 @@ static int mt6359_accdet_probe(struct platform_device *pdev)
 	priv->accdet_status = 0x3;
 	mt6359_accdet_init(priv);
 
+	priv->accdet_irq = platform_get_irq_byname(pdev, "ACCDET_IRQ");
+	if (priv->accdet_irq < 0)
+		return priv->accdet_irq;
+	ret = devm_request_threaded_irq(&pdev->dev, priv->accdet_irq, NULL,
+					mt6359_accdet_irq,
+					IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
+					"ACCDET_IRQ", priv);
+	if (ret)
+		return dev_err_probe(&pdev->dev, ret,
+				     "failed to request ACCDET IRQ\n");
+
+	if (priv->caps & ACCDET_PMIC_EINT0) {
+		priv->accdet_eint0 = platform_get_irq_byname(pdev,
+						       "ACCDET_EINT0");
+		if (priv->accdet_eint0 < 0)
+			return priv->accdet_eint0;
+		ret = devm_request_threaded_irq(&pdev->dev, priv->accdet_eint0,
+						NULL, mt6359_accdet_irq,
+						IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
+						"ACCDET_EINT0", priv);
+		if (ret)
+			return dev_err_probe(&pdev->dev, ret,
+					     "failed to request ACCDET EINT0 IRQ\n");
+	} else if (priv->caps & ACCDET_PMIC_EINT1) {
+		priv->accdet_eint1 = platform_get_irq_byname(pdev,
+						       "ACCDET_EINT1");
+		if (priv->accdet_eint1 < 0)
+			return priv->accdet_eint1;
+		ret = devm_request_threaded_irq(&pdev->dev, priv->accdet_eint1,
+						NULL, mt6359_accdet_irq,
+						IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
+						"ACCDET_EINT1", priv);
+		if (ret)
+			return dev_err_probe(&pdev->dev, ret,
+					     "failed to request ACCDET EINT1 IRQ\n");
+	}
+
+	mt6359_accdet_data = priv;
+
 	mt6359_accdet_jack_report(priv);
 
 	return 0;
-
-err_eint_wq:
-	destroy_workqueue(priv->accdet_workqueue);
-err_accdet_wq:
-	dev_err(&pdev->dev, "%s error. now exit.!\n", __func__);
-	return ret;
 }
+
+static void mt6359_accdet_remove(struct platform_device *pdev)
+{
+	if (mt6359_accdet_data == platform_get_drvdata(pdev))
+		mt6359_accdet_data = NULL;
+}
+
+static const struct of_device_id mt6359_accdet_of_match[] = {
+	{ .compatible = "mediatek,mt6359-accdet" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, mt6359_accdet_of_match);
 
 static struct platform_driver mt6359_accdet_driver = {
 	.driver = {
 		.name = "pmic-codec-accdet",
+		.of_match_table = mt6359_accdet_of_match,
 	},
 	.probe = mt6359_accdet_probe,
+	.remove_new = mt6359_accdet_remove,
 };
 
 module_platform_driver(mt6359_accdet_driver)

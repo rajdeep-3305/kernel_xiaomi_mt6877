@@ -2406,3 +2406,50 @@ config SND_SOC_LPASS_TX_MACRO
 	tristate "Qualcomm TX Macro in LPASS(Low Power Audio SubSystem)"
 
 endmenu
+
+config SND_SOC_FS16XX
+	tristate "FourSemi fs16xx Codec Driver"
+	depends on I2C
+	help
+	  for FourSemi True Smart Amplifier.
+
+config SND_SOC_RT5509
+	tristate "Richtek RT5509 Smart AMP"
+	depends on I2C
+	select RT_REGMAP
+	help
+	  Config of RT5509. It is a Smart power
+	  amplifier which contain speaker protection,
+	  multi-band DRC, equalizer function. It would
+	  be set to yes if device with RT5509 on it.
+
+config SND_SOC_RT5512
+	tristate "Mediatek RT5512 speaker amplifier"
+	depends on I2C
+	select SND_RICHTEK_SPM
+	help
+	  Config of RT5512. It is a Smart power
+	  amplifier which contain speaker protection,
+	  multi-band DRC, equalizer function. It would
+	  be set to yes if device with RT5512 on it.
+
+config SND_SOC_SMARTPAINFO
+	tristate "smartpa info"
+	depends on I2C
+	help
+	  Config of SMARTPAINFO. This config can be
+	  used to enable SND_SOC_SMARTPAINFO.
+	  It is a smartpa.It would be set to yes
+	  if device with smartpa on it, enable it.
+	  If unsure, say N.
+
+config SND_SOC_TFA9874
+	tristate "NXP Semiconductors TFA9874 amplifier"
+	depends on I2C
+
+config SND_SMARTPA_AW882XX
+	tristate "SoC Audio for Awinic AW882xx"
+	depends on I2C
+	help
+	  Enable support for Awinic AW882xx smart amplifier codec drivers.
+
