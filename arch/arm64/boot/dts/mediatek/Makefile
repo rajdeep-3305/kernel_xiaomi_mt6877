@@ -54,3 +54,11 @@ dtb-$(CONFIG_ARCH_MEDIATEK) += mt8195-demo.dtb
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt8195-evb.dtb
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt8365-evk.dtb
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt8516-pumpkin.dtb
+
+DTC_INCLUDE += $(srctree)/arch/arm64/boot/dts
+DTC_INCLUDE += $(srctree)/include
+DTC_INCLUDE += $(objtree)/include
+
+dtb-$(CONFIG_MACH_MT6877) += mt6877.dtb ruby.dtbo
+DTC_FLAGS_mt6877 += -@
+DTC_FLAGS_ruby += -@
