@@ -1484,3 +1484,14 @@ config I2C_VIRTIO
           will be called i2c-virtio.
 
 endmenu
+
+config I2C_MTK
+	tristate "MediaTek I2C Driver"
+	default n
+	help
+	  This selects the MediaTek(R) Integrated Inter Circuit bus driver.
+	  MediaTek(R) I2C bus adapter is the base for some other I2C client,
+	  eg: touch, sensors.
+	  If you want to use MediaTek(R) I2C interface, say Y or M here.
+	  If unsure, say N.
+

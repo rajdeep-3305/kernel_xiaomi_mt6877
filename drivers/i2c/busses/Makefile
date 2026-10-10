@@ -157,3 +157,7 @@ obj-$(CONFIG_I2C_FSI)		+= i2c-fsi.o
 obj-$(CONFIG_I2C_VIRTIO)	+= i2c-virtio.o
 
 ccflags-$(CONFIG_I2C_DEBUG_BUS) := -DDEBUG
+
+obj-$(CONFIG_I2C_MTK)		+= i2c-mtk.o
+# obj-$(CONFIG_I2C_MTK)       	+= i2c-mtk_debug.o
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/include/mt-plat
