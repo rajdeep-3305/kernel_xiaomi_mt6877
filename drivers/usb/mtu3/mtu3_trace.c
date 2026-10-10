@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * mtu3_trace.c - trace support
- *
  * Copyright (C) 2019 MediaTek Inc.
- *
- * Author: Chunfeng Yun <chunfeng.yun@mediatek.com>
+ * Author Chunfeng Yun <chunfeng.yun@mediatek.com>
  */
 
 #define CREATE_TRACE_POINTS
-#include "mtu3_debug.h"
 #include "mtu3_trace.h"
 
 void mtu3_dbg_trace(struct device *dev, const char *fmt, ...)

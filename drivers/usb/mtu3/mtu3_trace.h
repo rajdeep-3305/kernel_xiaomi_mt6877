@@ -1,10 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/**
- * mtu3_trace.h - trace support
- *
+/*
  * Copyright (C) 2019 MediaTek Inc.
- *
- * Author: Chunfeng Yun <chunfeng.yun@mediatek.com>
+ * Author Chunfeng Yun <chunfeng.yun@mediatek.com>
  */
 
 #undef TRACE_SYSTEM
@@ -18,16 +15,18 @@
 
 #include "mtu3.h"
 
+#define MTU3_MSG_MAX	256
+
 TRACE_EVENT(mtu3_log,
 	TP_PROTO(struct device *dev, struct va_format *vaf),
 	TP_ARGS(dev, vaf),
 	TP_STRUCT__entry(
 		__string(name, dev_name(dev))
-		__vstring(msg, vaf->fmt, vaf->va)
+		__dynamic_array(char, msg, MTU3_MSG_MAX)
 	),
 	TP_fast_assign(
 		__assign_str(name, dev_name(dev));
-		__assign_vstr(msg, vaf->fmt, vaf->va);
+		vsnprintf(__get_str(msg), MTU3_MSG_MAX, vaf->fmt, *vaf->va);
 	),
 	TP_printk("%s: %s", __get_str(name), __get_str(msg))
 );
@@ -236,8 +235,8 @@ DECLARE_EVENT_CLASS(mtu3_log_ep,
 		__entry->direction = mep->is_in;
 		__entry->gpd_ring = &mep->gpd_ring;
 	),
-	TP_printk("%s: type %s maxp %d slot %d mult %d burst %d ring %p/%pad flags %c:%c%c%c:%c",
-		__get_str(name), usb_ep_type_string(__entry->type),
+	TP_printk("%s: type %d maxp %d slot %d mult %d burst %d ring %p/%pad flags %c:%c%c%c:%c",
+		__get_str(name), __entry->type,
 		__entry->maxp, __entry->slot,
 		__entry->mult, __entry->maxburst,
 		__entry->gpd_ring, &__entry->gpd_ring->dma,
