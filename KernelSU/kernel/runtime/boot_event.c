@@ -11,6 +11,9 @@
 #include "runtime/ksud.h"
 #include "manager/manager_observer.h"
 #include "manager/throne_tracker.h"
+#ifdef CONFIG_KSU_SUSFS
+#include "feature/susfs.h"
+#endif
 
 bool ksu_module_mounted __read_mostly = false;
 bool ksu_boot_completed __read_mostly = false;
@@ -27,6 +30,9 @@ void on_post_fs_data(void)
 	done = true;
 	pr_info("on_post_fs_data!\n");
 
+#ifdef CONFIG_KSU_SUSFS
+	susfs_on_post_fs_data();
+#endif
 
 	ksu_load_allow_list();
 	ksu_observer_init();

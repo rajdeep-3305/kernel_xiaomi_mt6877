@@ -11,6 +11,10 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/uidgid.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#include "selinux/selinux.h"
+#endif
 
 #include "policy/allowlist.h"
 #include "hook/setuid_hook.h"
@@ -30,6 +34,17 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 
     pr_info("handle_setresuid from %d to %d\n", old_uid, new_uid);
 
+#ifdef CONFIG_KSU_SUSFS
+    if (is_zygote(current_cred()) &&
+        (is_appuid(new_uid) || is_isolated_process(new_uid))) {
+        task_lock(current);
+        if (is_uid_manager(new_uid) || ksu_is_allow_uid(new_uid))
+            current->susfs_task_state &= ~TASK_STRUCT_NON_ROOT_USER_APP_PROC;
+        else
+            current->susfs_task_state |= TASK_STRUCT_NON_ROOT_USER_APP_PROC;
+        task_unlock(current);
+    }
+#endif
 
     if (unlikely(is_uid_manager(new_uid))) {
 

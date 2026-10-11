@@ -72,5 +72,6 @@ config KSU_SYSCALL_TABLE_HOOK
 
 endchoice
 
+source "KernelSU/kernel/Kconfig.susfs"
 
 endmenu

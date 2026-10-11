@@ -1355,7 +1355,15 @@ struct task_struct {
 #else
 	ANDROID_KABI_RESERVE(7);
 #endif
+#ifdef CONFIG_KSU_SUSFS
+	/* SUSFS flags and mount IDs fit in the final reserved 64-bit slot. */
+	ANDROID_KABI_USE(8, struct {
+		u32 susfs_task_state;
+		u32 susfs_last_fake_mnt_id;
+	});
+#else
 	ANDROID_KABI_RESERVE(8);
+#endif
 #ifdef CONFIG_MTK_TASK_TURBO
 	unsigned short turbo:1;
 	unsigned short render:1;
