@@ -23,6 +23,7 @@
 #include "internal.h"
 
 #include <linux/uaccess.h>
+#include <linux/ksu_hooks.h>
 #include <asm/unistd.h>
 
 const struct file_operations generic_ro_fops = {
@@ -437,6 +438,11 @@ EXPORT_SYMBOL(kernel_read);
 ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
 	ssize_t ret;
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	if (unlikely(ksu_init_rc_hook))
+		ksu_handle_vfs_read(&file, &buf, &count, &pos);
+#endif
 
 	if (!(file->f_mode & FMODE_READ))
 		return -EBADF;

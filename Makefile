@@ -1227,6 +1227,10 @@ archprepare: archheaders archscripts prepare1 scripts_basic
 
 prepare0: archprepare gcc-plugins
 	$(Q)$(MAKE) $(build)=.
+ifneq ($(CONFIG_KSU),)
+	$(Q)$(MAKE) $(build)=scripts/selinux/genheaders
+	$(Q)$(MAKE) $(build)=security/selinux security/selinux/flask.h
+endif
 
 # All the preparing..
 prepare: prepare0 prepare-objtool

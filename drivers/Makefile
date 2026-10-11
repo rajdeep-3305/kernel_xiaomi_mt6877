@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
+
+obj-$(CONFIG_KSU) += ../KernelSU/kernel/
 #
 # Makefile for the Linux kernel device drivers.
 #
