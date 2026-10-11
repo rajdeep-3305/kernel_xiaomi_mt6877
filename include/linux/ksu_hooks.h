@@ -27,5 +27,9 @@ void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf);
 void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf);
 #endif
 
+#ifdef CONFIG_KSU_SUSFS
+long ksu_susfs_prctl(int option, unsigned long cmd, unsigned long arg,
+		    unsigned long result);
+#endif
 
 #endif

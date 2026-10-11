@@ -21,6 +21,10 @@
 #include "runtime/ksud_boot.h"
 #include "ksu.h"
 #include "compat/kernel_compat.h"
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#include "feature/susfs.h"
+#endif
 
 static bool ksu_kernel_umount_enabled = true;
 
@@ -95,9 +99,39 @@ static void try_umount(const char *mnt, int flags)
     ksu_umount_mnt(mnt, &path, flags);
 }
 
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+extern bool susfs_is_mnt_devname_ksu(struct path *path);
+
+void ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid)
+{
+	struct path path;
+
+	if (kern_path(mnt, 0, &path))
+		return;
+	if (path.dentry != path.mnt->mnt_root ||
+	    (check_mnt && !susfs_is_mnt_devname_ksu(&path))) {
+		path_put(&path);
+		return;
+	}
+	ksu_umount_mnt(mnt, &path, flags);
+}
+
+void susfs_try_umount_all(uid_t uid)
+{
+	susfs_try_umount(uid);
+	ksu_try_umount("/system", true, 0, uid);
+	ksu_try_umount("/system_ext", true, 0, uid);
+	ksu_try_umount("/vendor", true, 0, uid);
+	ksu_try_umount("/product", true, 0, uid);
+	ksu_try_umount("/odm", true, 0, uid);
+	ksu_try_umount("/data/adb/modules", false, MNT_DETACH, uid);
+	ksu_try_umount("/debug_ramdisk", true, MNT_DETACH, uid);
+}
+#endif
 
 struct umount_tw {
 	struct callback_head cb;
+	uid_t uid;
 };
 
 static void umount_tw_func(struct callback_head *cb)
@@ -105,6 +139,9 @@ static void umount_tw_func(struct callback_head *cb)
 	struct umount_tw *tw = container_of(cb, struct umount_tw, cb);
 	const struct cred *saved = override_creds(ksu_cred);
 
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+	susfs_try_umount_all(tw->uid);
+#endif
 
     struct mount_entry *entry;
     down_read(&mount_list_lock);
@@ -124,9 +161,11 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	struct umount_tw *tw;
 
 	// if there isn't any module mounted, just ignore it!
+#ifndef CONFIG_KSU_SUSFS_TRY_UMOUNT
 	if (!ksu_module_mounted) {
 		return 0;
 	}
+#endif
 
 	if (!ksu_kernel_umount_enabled) {
 		return 0;
@@ -144,6 +183,9 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	// 5. Isolated process forked from app zygote: appuid -> isolated_process (already handled by 3)
 	// 6. Isolated process forked from webview zygote (already handled by 4)
 	if (!is_appuid(new_uid) && new_uid != WEBVIEW_ZYGOTE_UID && !is_isolated_process(new_uid)
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	    && !(susfs_umount_for_zygote_system_process_enabled && new_uid >= 1000 && new_uid < 10000)
+#endif
 	   ) {
 		return 0;
 	}
@@ -169,6 +211,7 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 		return 0;
 
 	tw->cb.func = umount_tw_func;
+	tw->uid = new_uid;
 
 	int err = task_work_add(current, &tw->cb, TWA_RESUME);
 	if (err) {

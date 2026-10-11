@@ -2,6 +2,7 @@ kernelsu-objs := core/init.o
 
 KSU_VERSION_OVERRIDE ?= 33294
 KSU_VERSION_TAG_OVERRIDE ?= v3.4.0-legacy
+kernelsu-$(CONFIG_KSU_SUSFS) += feature/susfs.o
 
 kernelsu-objs += compat/kernel_compat.o
 kernelsu-objs += feature/kernel_umount.o

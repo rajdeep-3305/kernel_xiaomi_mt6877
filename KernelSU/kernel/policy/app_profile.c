@@ -11,6 +11,9 @@
 #include <linux/thread_info.h>
 #include <linux/uidgid.h>
 #include <linux/version.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
 
 #include "policy/allowlist.h"
 #include "policy/app_profile.h"
@@ -222,6 +225,12 @@ int escape_with_root_profile(void)
 
     commit_creds(cred);
 
+#ifdef CONFIG_KSU_SUSFS
+    /* A newly granted process must regain access to paths hidden from apps. */
+    task_lock(current);
+    current->susfs_task_state &= ~TASK_STRUCT_NON_ROOT_USER_APP_PROC;
+    task_unlock(current);
+#endif
 
     disable_seccomp();
 
