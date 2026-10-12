@@ -1130,11 +1130,9 @@ static int _mt_cpufreq_verify(struct cpufreq_policy_data *policy)
 		p->idx_opp_ppm_base = cpu_dvfs_get_idx_by_freq(p, policy->min);
 		p->idx_opp_ppm_limit = cpu_dvfs_get_idx_by_freq(p, policy->max);
 		cpuhvfs_set_min_max(p->id, p->idx_opp_ppm_base, p->idx_opp_ppm_limit);
-		pr_info("update cpufreq limit idx min %d---max %d,freq min %d ---max %d\n",
-		p->idx_opp_ppm_base,
-		p->idx_opp_ppm_limit,
-		policy->min,
-		policy->max);
+		pr_debug("update cpufreq limit idx min %d---max %d,freq min %d ---max %d\n",
+			 p->idx_opp_ppm_base, p->idx_opp_ppm_limit,
+			 policy->min, policy->max);
 	}
 
 	return ret;
