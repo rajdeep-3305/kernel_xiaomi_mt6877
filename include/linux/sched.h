@@ -1346,6 +1346,10 @@ struct task_struct {
 	ANDROID_KABI_RESERVE(5);
 	ANDROID_KABI_RESERVE(6);
 #else
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	u64 android_kabi_reserved3;
+	u64 android_kabi_reserved4;
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	struct mutex			futex_exit_mutex;
 #endif
 
