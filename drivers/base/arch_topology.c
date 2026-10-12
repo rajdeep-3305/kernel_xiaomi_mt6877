@@ -31,7 +31,9 @@
 static DEFINE_PER_CPU(struct scale_freq_data __rcu *, sft_data);
 static struct cpumask scale_freq_counters_mask;
 static bool scale_freq_invariant;
-DEFINE_PER_CPU(unsigned long, capacity_freq_ref) = 1;
+static DEFINE_PER_CPU(u32, freq_factor) = 1;
+/* Leave the kHz reference unset until CPUFreq publishes a policy. */
+DEFINE_PER_CPU(unsigned long, capacity_freq_ref);
 EXPORT_PER_CPU_SYMBOL_GPL(capacity_freq_ref);
 
 static bool supports_scale_freq_counters(const struct cpumask *cpus)
@@ -452,6 +454,7 @@ init_cpu_capacity_callback(struct notifier_block *nb,
 		per_cpu(capacity_freq_ref, cpu) = policy->cpuinfo.max_freq;
 		freq_inv_set_max_ratio(cpu,
 				       per_cpu(capacity_freq_ref, cpu) * HZ_PER_KHZ);
+		per_cpu(freq_factor, cpu) = policy->cpuinfo.max_freq / 1000;
 	}
 
 	if (cpumask_empty(cpus_to_visit)) {
