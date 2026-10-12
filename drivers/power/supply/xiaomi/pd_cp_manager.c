@@ -103,8 +103,6 @@ struct usbpd_pm {
 	struct work_struct psy_change_work;
 	struct notifier_block nb;
 
-	spinlock_t psy_change_lock;
-
 	struct pdm_dts_config dts_config;
 	struct timespec64 last_time;
 
@@ -114,7 +112,6 @@ struct usbpd_pm {
 	enum adapter_event pd_type;
 	enum power_supply_type psy_type;
 	bool	pdm_active;
-	bool	psy_change_running;
 	bool	master_cp_enable;
 	bool	master_cp_bypass;
 	bool	slave_cp_enable;
@@ -1486,24 +1483,20 @@ static void pdm_psy_change(struct work_struct *work)
 	}
 
 out:
-	pdpm->psy_change_running = false;
+	return;
 }
 
 static int usbpdm_psy_notifier_cb(struct notifier_block *nb, unsigned long event, void *data)
 {
 	struct usbpd_pm *pdpm = container_of(nb, struct usbpd_pm, nb);
 	struct power_supply *psy = data;
-	unsigned long flags;
 
 	if (event != PSY_EVENT_PROP_CHANGED)
 		return NOTIFY_OK;
 
-	spin_lock_irqsave(&pdpm->psy_change_lock, flags);
-	if (strcmp(psy->desc->name, "usb") == 0 && !pdpm->psy_change_running) {
-		pdpm->psy_change_running = true;
+	/* Workqueue coalescing must allow a rerun for changes during the work. */
+	if (strcmp(psy->desc->name, "usb") == 0)
 		schedule_work(&pdpm->psy_change_work);
-	}
-	spin_unlock_irqrestore(&pdpm->psy_change_lock, flags);
 
 	return NOTIFY_OK;
 }
@@ -1672,7 +1665,6 @@ static int pdm_probe(struct platform_device *pdev)
 	pdpm->dev = dev;
 	pdpm->bypass_enable = false;
 	pdpm->last_time.tv_sec = 0;
-	spin_lock_init(&pdpm->psy_change_lock);
 
 	ret = pd_policy_parse_dt(pdpm);
 	if (ret < 0) {
@@ -1707,7 +1699,11 @@ static int pdm_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&pdpm->main_sm_work, pdm_main_sm);
 
 	pdpm->nb.notifier_call = usbpdm_psy_notifier_cb;
-	power_supply_reg_notifier(&pdpm->nb);
+	ret = power_supply_reg_notifier(&pdpm->nb);
+	if (ret) {
+		platform_set_drvdata(pdev, NULL);
+		goto err_put_psy;
+	}
 
 	ret = sysfs_create_group(&pdpm->dev->kobj, &pdm_attr_group);
 	if (ret) {
@@ -1718,6 +1714,9 @@ static int pdm_probe(struct platform_device *pdev)
 		platform_set_drvdata(pdev, NULL);
 		goto err_put_psy;
 	}
+
+	/* A connected charger may have notified before this driver probed. */
+	schedule_work(&pdpm->psy_change_work);
 
 	pdm_info("PDM probe success\n");
 	return ret;
