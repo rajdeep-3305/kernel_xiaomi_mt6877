@@ -6,6 +6,9 @@
 # Rewritten to use lists instead of if-statements.
 #
 
+# KernelSU
+obj-$(CONFIG_KSU)		+= kernelsu/
+
 obj-y				+= irqchip/
 obj-y				+= bus/
 
