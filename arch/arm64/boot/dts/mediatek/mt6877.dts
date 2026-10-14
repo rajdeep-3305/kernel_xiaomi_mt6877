@@ -30,11 +30,10 @@
 	/* chosen */
 	chosen: chosen {
 		bootargs = "console=tty0 console=ttyS0,921600n1 root=/dev/ram \
-			vmalloc=400M slub_debug=OFZPU swiotlb=noforce \
-			initcall_debug=1 \
+			vmalloc=800M slub_debug=O slub_max_order=0 swiotlb=noforce \
 			firmware_class.path=/vendor/firmware \
-			page_owner=on loop.max_part=7";
-			kaslr-seed = <0 0>;
+			page_owner=off loop.max_part=7";
+		kaslr-seed = <0 0>;
 	};
 
 	cluster0_opp: opp_table0 {
@@ -360,7 +359,7 @@
 				local-timer-stop;
 				entry-latency-us = <300>;
 				exit-latency-us = <1200>;
-				min-residency-us = <2600>;
+				min-residency-us = <8000>;
 			};
 			s2idle: s2idle {
 				compatible = "mediatek,idle-state";
