@@ -948,29 +948,44 @@ void _mt_cpufreq_dvfs_request_wrapper(struct mt_cpu_dvfs *p, int new_opp_idx,
 		cpufreq_ver("DVFS - MT_CPU_DVFS_PPM\n");
 		for_each_cpu_dvfs_only(i, pp) {
 			if (pp->armpll_is_available &&
-			pp->mt_policy->governor) {
+			pp->mt_policy && pp->mt_policy->governor) {
+				unsigned int ppm_max, ppm_min;
+				unsigned int cur_freq;
+
 				cpufreq_para_lock(para_flags);
 				if (pp->idx_opp_ppm_limit == -1)
-					pp->mt_policy->max =
-					cpu_dvfs_get_max_freq(pp);
+					ppm_max = cpu_dvfs_get_max_freq(pp);
 				else
-					pp->mt_policy->max =
-					cpu_dvfs_get_freq_by_idx(pp,
+					ppm_max = cpu_dvfs_get_freq_by_idx(pp,
 					pp->idx_opp_ppm_limit);
 				if (pp->idx_opp_ppm_base == -1)
-					pp->mt_policy->min =
-					cpu_dvfs_get_min_freq(pp);
+					ppm_min = cpu_dvfs_get_min_freq(pp);
 				else
-					pp->mt_policy->min =
-					cpu_dvfs_get_freq_by_idx(pp,
+					ppm_min = cpu_dvfs_get_freq_by_idx(pp,
 					pp->idx_opp_ppm_base);
 
+				if (pp->mt_policy->user_policy.max)
+					pp->mt_policy->max = min(ppm_max,
+						pp->mt_policy->user_policy.max);
+				else
+					pp->mt_policy->max = ppm_max;
+
+				if (pp->mt_policy->user_policy.min)
+					pp->mt_policy->min = max(ppm_min,
+						pp->mt_policy->user_policy.min);
+				else
+					pp->mt_policy->min = ppm_min;
+
+				if (pp->mt_policy->min > pp->mt_policy->max)
+					pp->mt_policy->min = pp->mt_policy->max;
+
+				cur_freq = cpu_dvfs_get_cur_freq(pp);
 				ignore_ppm = 0;
-				if ((pp->idx_opp_tbl >= pp->mt_policy->max) &&
-				(pp->idx_opp_tbl <= pp->mt_policy->min)) {
+				if (cur_freq >= pp->mt_policy->min &&
+				    cur_freq <= pp->mt_policy->max) {
 					cpufreq_ver
-		("idx = %d, idx_opp_ppm_base = %d, idx_opp_ppm_limit = %d\n",
-					pp->idx_opp_tbl, pp->mt_policy->min,
+		("cur_freq = %d, min = %d, max = %d\n",
+					cur_freq, pp->mt_policy->min,
 					pp->mt_policy->max);
 					ignore_ppm = 1;
 				}
@@ -1097,6 +1112,7 @@ static unsigned int _calc_new_opp_idx_no_base(struct mt_cpu_dvfs *p,
 	int new_opp_idx)
 {
 	unsigned long flags;
+	int user_max_idx = -1;
 
 	FUNC_ENTER(FUNC_LV_HELP);
 
@@ -1110,6 +1126,13 @@ static unsigned int _calc_new_opp_idx_no_base(struct mt_cpu_dvfs *p,
 	(new_opp_idx < p->idx_opp_ppm_limit))
 		new_opp_idx = p->idx_opp_ppm_limit;
 
+	if (p->mt_policy && p->mt_policy->user_policy.max) {
+		user_max_idx = _search_available_freq_idx(p,
+			p->mt_policy->user_policy.max, CPUFREQ_RELATION_H);
+		if (user_max_idx != -1 && new_opp_idx < user_max_idx)
+			new_opp_idx = user_max_idx;
+	}
+
 	cpufreq_para_unlock(flags);
 
 	FUNC_EXIT(FUNC_LV_HELP);
@@ -1120,6 +1143,8 @@ static unsigned int _calc_new_opp_idx_no_base(struct mt_cpu_dvfs *p,
 static unsigned int _calc_new_opp_idx(struct mt_cpu_dvfs *p, int new_opp_idx)
 {
 	unsigned long flags;
+	int user_min_idx = -1;
+	int user_max_idx = -1;
 
 	FUNC_ENTER(FUNC_LV_HELP);
 
@@ -1134,6 +1159,22 @@ static unsigned int _calc_new_opp_idx(struct mt_cpu_dvfs *p, int new_opp_idx)
 
 	if ((p->idx_opp_ppm_base != -1) && (new_opp_idx > p->idx_opp_ppm_base))
 		new_opp_idx = p->idx_opp_ppm_base;
+
+	if (p->mt_policy) {
+		if (p->mt_policy->user_policy.max) {
+			user_max_idx = _search_available_freq_idx(p,
+				p->mt_policy->user_policy.max, CPUFREQ_RELATION_H);
+			if (user_max_idx != -1 && new_opp_idx < user_max_idx)
+				new_opp_idx = user_max_idx;
+		}
+
+		if (p->mt_policy->user_policy.min) {
+			user_min_idx = _search_available_freq_idx(p,
+				p->mt_policy->user_policy.min, CPUFREQ_RELATION_L);
+			if (user_min_idx != -1 && new_opp_idx > user_min_idx)
+				new_opp_idx = user_min_idx;
+		}
+	}
 
 	if ((p->idx_opp_ppm_base == p->idx_opp_ppm_limit) &&
 	p->idx_opp_ppm_base != -1)

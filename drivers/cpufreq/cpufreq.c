@@ -2388,20 +2388,17 @@ void cpufreq_set_policy_ppm(unsigned int cpu, int min, int max)
 {
 	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
 	struct cpufreq_policy new_policy;
-	int ret;
 
 	if (!policy)
 		return;
 
 	down_write(&policy->rwsem);
 	memcpy(&new_policy, policy, sizeof(*policy));
-	new_policy.min = min;
-	new_policy.max = max;
-	ret = cpufreq_set_policy(policy, &new_policy);
-	if (!ret) {
-		policy->user_policy.min = min;
-		policy->user_policy.max = max;
-	}
+	new_policy.min = max((unsigned int)min, policy->user_policy.min);
+	new_policy.max = min((unsigned int)max, policy->user_policy.max ? policy->user_policy.max : (unsigned int)max);
+	if (new_policy.min > new_policy.max)
+		new_policy.min = new_policy.max;
+	cpufreq_set_policy(policy, &new_policy);
 	up_write(&policy->rwsem);
 
 	cpufreq_cpu_put(policy);
