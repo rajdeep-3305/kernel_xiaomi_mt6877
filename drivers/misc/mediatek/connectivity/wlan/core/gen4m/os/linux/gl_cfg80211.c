@@ -8601,6 +8601,25 @@ int mtk_cfg_suspend(struct wiphy *wiphy,
 		return 0;
 	}
 
+#if CFG_ENABLE_WIFI_DIRECT
+	/* Role settings can outlive stop_ap(); only block for an active BSS. */
+	if (prGlueInfo->prAdapter) {
+		struct ADAPTER *adapter = prGlueInfo->prAdapter;
+		struct BSS_INFO *bss;
+		u8 i;
+
+		for (i = 0; i < adapter->ucHwBssIdNum; i++) {
+			bss = GET_BSS_INFO_BY_INDEX(adapter, i);
+			if (IS_BSS_APGO(bss) && IS_BSS_ACTIVE(bss)) {
+				DBGLOG(REQ, INFO,
+				       "SoftAP/GO active on BSS %u, rejecting suspend\n",
+				       i);
+				return -EBUSY;
+			}
+		}
+	}
+#endif
+
 #if CFG_CHIP_RESET_SUPPORT && !CFG_WMT_RESET_API_SUPPORT
 
 	/* Before cfg80211 suspend, we must make sure L0.5 is either
