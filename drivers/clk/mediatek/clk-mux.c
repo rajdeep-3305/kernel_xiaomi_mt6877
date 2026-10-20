@@ -222,15 +222,23 @@ static int mtk_clk_mux_set_parent_setclr_lock(struct clk_hw *hw, u8 index)
 	return 0;
 }
 
+static int mtk_clk_mux_determine_rate(struct clk_hw *hw,
+				      struct clk_rate_request *req)
+{
+	return clk_mux_determine_rate_flags(hw, req, 0);
+}
+
 const struct clk_ops mtk_mux_ops = {
 	.get_parent = mtk_clk_mux_get_parent,
 	.set_parent = mtk_clk_mux_set_parent_lock,
+	.determine_rate = mtk_clk_mux_determine_rate,
 };
 EXPORT_SYMBOL(mtk_mux_ops);
 
 const struct clk_ops mtk_mux_clr_set_upd_ops = {
 	.get_parent = mtk_clk_mux_get_parent,
 	.set_parent = mtk_clk_mux_set_parent_setclr_lock,
+	.determine_rate = mtk_clk_mux_determine_rate,
 };
 EXPORT_SYMBOL(mtk_mux_clr_set_upd_ops);
 
@@ -241,6 +249,7 @@ const struct clk_ops mtk_mux_gate_ops = {
 	.get_parent = mtk_clk_mux_get_parent,
 	.set_parent = mtk_clk_mux_set_parent_lock,
 	.disable_unused = mtk_clk_mux_disable_unused,
+	.determine_rate = mtk_clk_mux_determine_rate,
 };
 EXPORT_SYMBOL(mtk_mux_gate_ops);
 
@@ -251,6 +260,7 @@ const struct clk_ops mtk_mux_gate_clr_set_upd_ops = {
 	.get_parent = mtk_clk_mux_get_parent,
 	.set_parent = mtk_clk_mux_set_parent_setclr_lock,
 	.disable_unused = mtk_clk_mux_disable_setclr_unused,
+	.determine_rate = mtk_clk_mux_determine_rate,
 };
 EXPORT_SYMBOL(mtk_mux_gate_clr_set_upd_ops);
 
