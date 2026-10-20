@@ -862,7 +862,7 @@ static inline int snd_pcm_playback_data(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	
-	if (runtime->stop_threshold >= runtime->boundary)
+	if (runtime->stop_threshold >= runtime->boundary || runtime->stop_threshold == (unsigned int)-1 || runtime->stop_threshold == 0xffffffffU)
 		return 1;
 	return snd_pcm_playback_avail(runtime) < runtime->buffer_size;
 }

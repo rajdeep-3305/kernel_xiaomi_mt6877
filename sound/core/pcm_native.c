@@ -925,6 +925,8 @@ static int snd_pcm_sw_params(struct snd_pcm_substream *substream,
 	runtime->control->avail_min = params->avail_min;
 	runtime->start_threshold = params->start_threshold;
 	runtime->stop_threshold = params->stop_threshold;
+	if (runtime->stop_threshold == (unsigned int)-1 || runtime->stop_threshold == 0xffffffffU)
+		runtime->stop_threshold = runtime->boundary;
 	runtime->silence_threshold = params->silence_threshold;
 	runtime->silence_size = params->silence_size;
         params->boundary = runtime->boundary;
