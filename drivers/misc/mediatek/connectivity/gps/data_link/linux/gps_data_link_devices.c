@@ -32,6 +32,7 @@ int gps_dl_devno_minor;
 void gps_dl_dma_buf_free(struct gps_dl_dma_buf *p_dma_buf, enum gps_dl_link_id_enum link_id)
 {
 	struct gps_each_device *p_dev;
+	struct device *dma_dev;
 
 	p_dev = gps_dl_device_get(link_id);
 	if (p_dev == NULL) {
@@ -39,9 +40,12 @@ void gps_dl_dma_buf_free(struct gps_dl_dma_buf *p_dma_buf, enum gps_dl_link_id_e
 		return;
 	}
 
+	/* Match the device selected by gps_dl_dma_buf_alloc(). */
+	dma_dev = p_dev->private_data ? p_dev->private_data : p_dev->dev;
 	if (p_dma_buf->vir_addr)
-		dma_free_coherent(p_dev->dev,
-			p_dma_buf->len, p_dma_buf->vir_addr, p_dma_buf->phy_addr);
+		dma_free_coherent(dma_dev,
+				  p_dma_buf->len, p_dma_buf->vir_addr,
+				  p_dma_buf->phy_addr);
 
 	memset(p_dma_buf, 0, sizeof(*p_dma_buf));
 }
@@ -109,6 +113,7 @@ int gps_dl_dma_buf_alloc2(enum gps_dl_link_id_enum link_id)
 	int retval;
 	struct gps_each_device *p_dev;
 	struct gps_each_link *p_link;
+	struct device *dma_dev;
 
 	p_dev = gps_dl_device_get(link_id);
 	p_link = gps_dl_link_get(link_id);
@@ -117,17 +122,19 @@ int gps_dl_dma_buf_alloc2(enum gps_dl_link_id_enum link_id)
 		return -1;
 	}
 
-	#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
-		of_dma_configure(p_dev->dev, p_dev->dev->of_node, false);
-	#else
-		of_dma_configure(p_dev->dev, p_dev->dev->of_node);
-	#endif
+	dma_dev = p_dev->private_data ? p_dev->private_data : p_dev->dev;
+	/* The platform bus already configures DMA for the hardware device. */
+	if (!p_dev->private_data) {
+		retval = of_dma_configure(dma_dev, dma_dev->of_node, false);
+		if (retval)
+			return retval;
+	}
 
-	if (!p_dev->dev->coherent_dma_mask)
-		p_dev->dev->coherent_dma_mask = DMA_BIT_MASK(32);
+	if (!dma_dev->coherent_dma_mask)
+		dma_dev->coherent_dma_mask = DMA_BIT_MASK(32);
 
-	if (!p_dev->dev->dma_mask)
-		p_dev->dev->dma_mask = &p_dev->dev->coherent_dma_mask;
+	if (!dma_dev->dma_mask)
+		dma_dev->dma_mask = &dma_dev->coherent_dma_mask;
 
 
 	retval = gps_dl_dma_buf_alloc(

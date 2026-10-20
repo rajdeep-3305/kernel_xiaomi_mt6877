@@ -428,13 +428,29 @@ static int gps_dl_get_b13_status_addr(struct device *dev)
 
 static int gps_dl_probe(struct platform_device *pdev)
 {
-	struct resource *irq = NULL;
+	int irqs[GPS_DL_IRQ_NUM];
 	struct gps_each_device *p_each_dev0 = gps_dl_device_get(GPS_DATA_LINK_ID0);
 	struct gps_each_device *p_each_dev1 = gps_dl_device_get(GPS_DATA_LINK_ID1);
 	int i;
+	const char *compatible = NULL;
 	bool okay = false;
 
-	GDL_LOGW_INI("compatible = %s", (char *)pdev->dev.of_node->properties->value);
+	if (pdev->dev.of_node)
+		of_property_read_string(pdev->dev.of_node, "compatible", &compatible);
+	GDL_LOGW_INI("compatible = %s", compatible ? compatible : "unknown");
+
+	/* Resolve every IRQ before mapping resources or starting the links. */
+	for (i = 0; i < GPS_DL_IRQ_NUM; i++) {
+		irqs[i] = platform_get_irq(pdev, i);
+		if (irqs[i] < 0)
+			return dev_err_probe(&pdev->dev, irqs[i],
+					     "failed to get GPS IRQ %d\n", i);
+	}
+
+	for (i = 0; i < GPS_DL_IRQ_NUM; i++) {
+		GDL_LOGW_INI("irq idx = %d, irq_num = %d", i, irqs[i]);
+		gps_dl_irq_set_id(i, irqs[i]);
+	}
 
 	gps_not_allocate_emi_from_lk2 = 1;
 
@@ -462,18 +478,6 @@ static int gps_dl_probe(struct platform_device *pdev)
 	/* B13B14-status-addr*/
 	if (gps_dl_get_b13_status_addr(&pdev->dev) < 0)
 		GDL_LOGW_INI("warning : get B13B14 status addr fail");
-
-	for (i = 0; i < GPS_DL_IRQ_NUM; i++) {
-		irq = platform_get_resource(pdev, IORESOURCE_IRQ, i);
-		if (irq == NULL) {
-			GDL_LOGE_INI("irq idx = %d, ptr = NULL!", i);
-			continue;
-		}
-
-		GDL_LOGW_INI("irq idx = %d, start = %lld, end = %lld, name = %s, flag = 0x%lx",
-			i, irq->start, irq->end, irq->name, irq->flags);
-		gps_dl_irq_set_id(i, irq->start);
-	}
 
 	g_gps_dl_pinctrl_ptr = devm_pinctrl_get(&pdev->dev);
 	if (IS_ERR(g_gps_dl_pinctrl_ptr))
