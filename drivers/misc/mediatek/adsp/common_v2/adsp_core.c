@@ -242,8 +242,8 @@ void adsp_extern_notify_chain(enum ADSP_NOTIFY_EVENT event)
 void switch_adsp_power(bool on)
 {
 	if (on) {
-		adsp_enable_clock();
-		adsp_set_clock_freq(CLK_DEFAULT_INIT_CK);
+		if (adsp_enable_clock() == 0)
+			adsp_set_clock_freq(CLK_DEFAULT_INIT_CK);
 	} else {
 		adsp_set_clock_freq(CLK_DEFAULT_26M_CK);
 		adsp_disable_clock();

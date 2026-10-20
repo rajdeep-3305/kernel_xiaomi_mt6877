@@ -35,9 +35,13 @@ int adsp_set_top_mux(enum adsp_clk clk)
 	if (clk >= ADSP_CLK_NUM  || clk < 0)
 		return -EINVAL;
 
+	if (IS_ERR_OR_NULL(adsp_clks[CLK_TOP_ADSP_SEL].clock) ||
+	    IS_ERR_OR_NULL(adsp_clks[clk].clock))
+		return -EINVAL;
+
 	ret = clk_set_parent(adsp_clks[CLK_TOP_ADSP_SEL].clock,
 		      adsp_clks[clk].clock);
-	if (IS_ERR(&ret))
+	if (ret)
 		pr_err("[ADSP] %s clk_set_parent(clk_top_adsp_sel-%x) fail %d\n",
 		      __func__, clk, ret);
 	return ret;
@@ -68,6 +72,7 @@ int adsp_clk_device_probe(struct platform_device *pdev)
 			ret = PTR_ERR(adsp_clks[i].clock);
 			pr_err("%s devm_clk_get %s fail %d\n", __func__,
 				   adsp_clks[i].name, ret);
+			return ret;
 		}
 	}
 
@@ -77,10 +82,11 @@ int adsp_clk_device_probe(struct platform_device *pdev)
 			ret = PTR_ERR(scp_clks[i].clock);
 			pr_info("%s devm_clk_get %s fail %d\n", __func__,
 				   scp_clks[i].name, ret);
+			return ret;
 		}
 	}
 
-	return ret;
+	return 0;
 }
 
 /* clock deinit */
@@ -96,26 +102,42 @@ int adsp_enable_clock(void)
 	pr_debug("%s()\n", __func__);
 
 	/* enable scp clock before access adsp clock cg */
+	if (IS_ERR_OR_NULL(scp_clks[CLK_TOP_SCP_SEL].clock))
+		return -ENODEV;
+
 	ret = clk_prepare_enable(scp_clks[CLK_TOP_SCP_SEL].clock);
-	if (IS_ERR(&ret)) {
+	if (ret) {
 		pr_info("%s(), clk_prepare_enable %s fail, ret %d\n",
 			__func__, scp_clks[CLK_TOP_SCP_SEL].name, ret);
-		return -EINVAL;
+		return ret;
+	}
+
+	if (IS_ERR_OR_NULL(adsp_clks[CLK_SCP_SYS_ADSP].clock)) {
+		clk_disable_unprepare(scp_clks[CLK_TOP_SCP_SEL].clock);
+		return -ENODEV;
 	}
 
 	ret = clk_prepare_enable(adsp_clks[CLK_SCP_SYS_ADSP].clock);
-	if (IS_ERR(&ret)) {
+	if (ret) {
 		pr_info("%s(), clk_prepare_enable %s fail, ret %d\n",
 			__func__, adsp_clks[CLK_SCP_SYS_ADSP].name, ret);
-		return -EINVAL;
+		clk_disable_unprepare(scp_clks[CLK_TOP_SCP_SEL].clock);
+		return ret;
+	}
+
+	if (IS_ERR_OR_NULL(adsp_clks[CLK_ADSP_CK_CG].clock)) {
+		clk_disable_unprepare(adsp_clks[CLK_SCP_SYS_ADSP].clock);
+		clk_disable_unprepare(scp_clks[CLK_TOP_SCP_SEL].clock);
+		return -ENODEV;
 	}
 
 	ret = clk_prepare_enable(adsp_clks[CLK_ADSP_CK_CG].clock);
-	if (IS_ERR(&ret)) {
+	if (ret) {
 		pr_err("%s(), clk_prepare_enable %s fail, ret %d\n",
 			__func__, adsp_clks[CLK_ADSP_CK_CG].name, ret);
 		clk_disable_unprepare(adsp_clks[CLK_SCP_SYS_ADSP].clock);
-		return -EINVAL;
+		clk_disable_unprepare(scp_clks[CLK_TOP_SCP_SEL].clock);
+		return ret;
 
 	}
 	adsp_clock_count++;
@@ -128,8 +150,11 @@ void adsp_disable_clock(void)
 	pr_debug("%s()\n", __func__);
 
 	adsp_clock_count--;
-	clk_disable_unprepare(adsp_clks[CLK_ADSP_CK_CG].clock);
-	clk_disable_unprepare(adsp_clks[CLK_SCP_SYS_ADSP].clock);
-	clk_disable_unprepare(scp_clks[CLK_TOP_SCP_SEL].clock);
+	if (!IS_ERR_OR_NULL(adsp_clks[CLK_ADSP_CK_CG].clock))
+		clk_disable_unprepare(adsp_clks[CLK_ADSP_CK_CG].clock);
+	if (!IS_ERR_OR_NULL(adsp_clks[CLK_SCP_SYS_ADSP].clock))
+		clk_disable_unprepare(adsp_clks[CLK_SCP_SYS_ADSP].clock);
+	if (!IS_ERR_OR_NULL(scp_clks[CLK_TOP_SCP_SEL].clock))
+		clk_disable_unprepare(scp_clks[CLK_TOP_SCP_SEL].clock);
 
 }
