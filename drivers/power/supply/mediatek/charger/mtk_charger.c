@@ -1763,6 +1763,7 @@ static int mtk_charger_plug_out(struct charger_manager *info)
 	info->cv_wa_count = 0;
 	info->apdo_max = 0;
 	info->charger_thread_polling = false;
+	alarm_try_to_cancel(&info->charger_timer);
 	pdata1->disable_charging_count = 0;
 	pdata1->input_current_limit_by_aicl = -1;
 	pdata2->disable_charging_count = 0;

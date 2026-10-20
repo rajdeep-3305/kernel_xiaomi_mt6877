@@ -3920,7 +3920,7 @@ static int mt6360_chg_mivr_task_threadfn(void *data)
 
 	dev_info(mci->dev, "%s ++\n", __func__);
 	while (!kthread_should_stop()) {
-		wait_event(mci->mivr_wq, atomic_read(&mci->mivr_cnt) > 0 ||
+		wait_event_interruptible(mci->mivr_wq, atomic_read(&mci->mivr_cnt) > 0 ||
 							 kthread_should_stop());
 		mt_dbg(mci->dev, "%s: enter mivr thread\n", __func__);
 		if (kthread_should_stop())

@@ -119,7 +119,7 @@ static int fsm_poll_main(void *data)
 						break;
 					}
 					count++;
-					msleep(200);
+					msleep_interruptible(200);
 				}
 				if (count) {
 					CCCI_ERROR_LOG(0, FSM,
@@ -131,7 +131,7 @@ static int fsm_poll_main(void *data)
 			}
 		}
 next:
-		msleep(POLLING_INTERVAL_TIME);
+		msleep_interruptible(POLLING_INTERVAL_TIME);
 	}
 	return 0;
 }

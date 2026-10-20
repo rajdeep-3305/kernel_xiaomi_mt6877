@@ -1794,7 +1794,7 @@ static int hang_detect_thread(void *arg)
 			hang_detect_counter--;
 		}
 
-		msleep((HD_INTER) * 1000);
+		msleep_interruptible((HD_INTER) * 1000);
 	}
 	return 0;
 }

@@ -611,7 +611,7 @@ static int kwdt_thread(void *arg)
 			spin_unlock(&lock);
 		}
 
-		usleep_range(curInterval, curInterval + SOFT_KICK_RANGE);
+		usleep_idle_range(curInterval, curInterval + SOFT_KICK_RANGE);
 	}
 	pr_debug("[wdk] wdk thread stop, cpu:%d, pid:%d\n", cpu, current->pid);
 	return 0;

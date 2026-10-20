@@ -415,8 +415,10 @@ static void mdrt_monitor_init(void)
 	if (IS_ERR(mdrt_thread_handle)) {
 		mdrt_thread_handle = NULL;
 		pr_notice(PMICTAG "[%s] creation fails\n", __func__);
-	} else
+	} else {
+		wake_up_process(mdrt_thread_handle);
 		HKLOG("[%s] creation Done\n", __func__);
+	}
 }
 
 /*********************************
