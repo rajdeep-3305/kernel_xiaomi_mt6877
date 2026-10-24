@@ -408,7 +408,7 @@ struct inode *orangefs_iget(struct super_block *sb,
 	if (!inode || !(inode->i_state & I_NEW))
 		return inode;
 
-	error = orangefs_inode_getattr(inode, 1, 1, STATX_ALL);
+	error = orangefs_inode_getattr(inode, 1, 1, STATX_BASIC_STATS | STATX_BTIME);
 	if (error) {
 		iget_failed(inode);
 		return ERR_PTR(error);
@@ -453,7 +453,7 @@ struct inode *orangefs_new_inode(struct super_block *sb, struct inode *dir,
 	orangefs_set_inode(inode, ref);
 	inode->i_ino = hash;	/* needed for stat etc */
 
-	error = orangefs_inode_getattr(inode, 1, 1, STATX_ALL);
+	error = orangefs_inode_getattr(inode, 1, 1, STATX_BASIC_STATS | STATX_BTIME);
 	if (error)
 		goto out_iput;
 
