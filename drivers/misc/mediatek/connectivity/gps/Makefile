@@ -68,6 +68,9 @@ ccflags-y += -I$(srctree)/drivers/devfreq
 MODULE_NAME := gps_drv
 obj-y += $(MODULE_NAME).o
 
+# mnld consumes connectivity battery-level notifications through /dev/gps_pwr.
+obj-$(CONFIG_MTK_COMBO_CHIP_CONSYS_6877) += gps_pwr/
+
 GPS_DRV_CONTROL_LNA := n
 GPS_DL_SUPPORT := n
 GPS_DL_HAS_MOCK := n

@@ -1,3 +1,6 @@
+obj-y += gps_pwr.o
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/power_throttling
+
 all:
 	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules $(KBUILD_OPTIONS)
 

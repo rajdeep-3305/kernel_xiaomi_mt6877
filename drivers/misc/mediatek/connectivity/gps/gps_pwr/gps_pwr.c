@@ -24,6 +24,7 @@
 #include <linux/wait.h>
 #include <conn_power_throttling.h>
 #include <linux/poll.h>
+#include <linux/spinlock.h>
 #ifdef pr_fmt
 #undef pr_fmt
 #endif
@@ -52,6 +53,8 @@ struct gps_pwr_dev {
 bool has_new_battery_level;
 struct gps_pwr_dev *gps_pwr_devobj;
 static wait_queue_head_t GPS_PWR_wq;
+static DEFINE_SPINLOCK(gps_pwr_lock);
+static unsigned int battery_sequence;
 #define DRV_TYPE_GPS    2
 enum conn_pwr_low_battery_level battery_level;
 bool gps_pwr_open_state;
@@ -59,12 +62,16 @@ bool gps_pwr_open_state;
 int gps_pwr_msg_cb(enum conn_pwr_event_type event_type, void *level)
 {
 	int ret = 0;
+	unsigned long flags;
 
 	if (event_type == CONN_PWR_EVENT_LEVEL) {
 		pr_info("gps_pwr_msg_cb been called, level=%d, gps_pwr_open_state=%d\n",
 			*(enum conn_pwr_low_battery_level *)level, gps_pwr_open_state);
+		spin_lock_irqsave(&gps_pwr_lock, flags);
 		battery_level = *(enum conn_pwr_low_battery_level *)level;
+		battery_sequence++;
 		has_new_battery_level = true;
+		spin_unlock_irqrestore(&gps_pwr_lock, flags);
 		wake_up_interruptible(&GPS_PWR_wq);
 	}
 	return ret;
@@ -88,10 +95,20 @@ long gps_pwr_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg
 static int gps_pwr_open(struct inode *inode, struct file *file)
 {
 	int ret;
+	enum conn_pwr_low_battery_level level = CONN_PWR_THR_LV_0;
 
+	/* conn_pwr_init() clears callbacks, so register after the loader ran. */
+	ret = conn_pwr_register_event_cb(DRV_TYPE_GPS, gps_pwr_msg_cb);
+	if (ret)
+		return ret;
+	ret = conn_pwr_drv_pre_on(DRV_TYPE_GPS, &level);
+	if (ret) {
+		conn_pwr_register_event_cb(DRV_TYPE_GPS, NULL);
+		conn_pwr_drv_post_off(DRV_TYPE_GPS);
+		return ret;
+	}
 	gps_pwr_open_state = true;
-	ret = conn_pwr_drv_pre_on(DRV_TYPE_GPS, &battery_level);
-	has_new_battery_level = true;
+	gps_pwr_msg_cb(CONN_PWR_EVENT_LEVEL, &level);
 	pr_info("conn_pwr_drv_pre_on ret = %d, battery_level = %d\n", ret, battery_level);
 	return 0;
 }
@@ -105,36 +122,35 @@ static int gps_pwr_close(struct inode *inode, struct file *file)
 	int ret;
 
 	gps_pwr_open_state = false;
+	conn_pwr_register_event_cb(DRV_TYPE_GPS, NULL);
 	ret = conn_pwr_drv_post_off(DRV_TYPE_GPS);
 	pr_info("conn_pwr_drv_post_off ret = %d\n", ret);
 	return 0;
 }
 
-static ssize_t gps_pwr_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+static ssize_t gps_pwr_read(struct file *file, char __user *buf, size_t count,
+			    loff_t *ppos)
 {
-	int retval;
+	enum conn_pwr_low_battery_level level;
+	unsigned int sequence;
+	unsigned long flags;
 
-	pr_info("gps_pwr read\n");
+	if (!count)
+		return 0;
+	if (count < sizeof(battery_level))
+		return -EINVAL;
+	spin_lock_irqsave(&gps_pwr_lock, flags);
+	level = battery_level;
+	sequence = battery_sequence;
+	spin_unlock_irqrestore(&gps_pwr_lock, flags);
+	if (copy_to_user(buf, &level, sizeof(level)))
+		return -EFAULT;
 
-	if (count > sizeof(int))
-		count = sizeof(int);
-
-	if (copy_to_user(buf, (void *)&battery_level, sizeof(int))) {
-		pr_info("gps_pwr_read failed,because copy_to_user error\n");
-		retval = -EFAULT;
-	} else {
-		retval = sizeof(int);
+	spin_lock_irqsave(&gps_pwr_lock, flags);
+	if (sequence == battery_sequence)
 		has_new_battery_level = false;
-		return retval;
-	}
-
-	if (retval  ==  -EFAULT)
-		goto OUT;
-
-OUT:
-	/*	pr_info("gps_pwr_read(): retval = %d\n", retval);*/
-		return retval;
-
+	spin_unlock_irqrestore(&gps_pwr_lock, flags);
+	return sizeof(level);
 }
 /******************************************************************************/
 static ssize_t gps_pwr_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
@@ -151,7 +167,7 @@ static unsigned int gps_pwr_poll(struct file *file, poll_table *wait)
 	mask = 0;
 
 	poll_wait(file, &GPS_PWR_wq, wait);
-	if (has_new_battery_level == true)
+	if (READ_ONCE(has_new_battery_level))
 		mask = (POLLIN | POLLRDNORM);
 	pr_info("gps_pwr_poll been return , mask = %d\n", mask);
 
@@ -171,58 +187,53 @@ static const struct file_operations gps_pwr_fops = {
 
 static int gps_pwr_init(void)
 {
-	int ret = 0;
-	int err = 0;
+	int ret;
 
 	gps_pwr_devobj = kzalloc(sizeof(*gps_pwr_devobj), GFP_KERNEL);
-	if (gps_pwr_devobj == NULL) {
-		err = -ENOMEM;
-		ret = -ENOMEM;
-		goto err_out;
-	}
-
-	pr_info("Registering gps_pwr chardev\n");
-	ret = alloc_chrdev_region(&gps_pwr_devobj->devno, 0, 1, GPS_PWR_DEVNAME);
-	if (ret) {
-		pr_info("alloc_chrdev_region fail: %d\n", ret);
-		err = -ENOMEM;
-		goto err_out;
-	} else {
-		pr_info("major: %d, minor: %d\n", MAJOR(gps_pwr_devobj->devno), MINOR(gps_pwr_devobj->devno));
-	}
-	cdev_init(&gps_pwr_devobj->chdev, &gps_pwr_fops);
-	gps_pwr_devobj->chdev.owner = THIS_MODULE;
-	err = cdev_add(&gps_pwr_devobj->chdev, gps_pwr_devobj->devno, 1);
-	if (err) {
-		pr_info("cdev_add fail: %d\n", err);
-		goto err_out;
-	}
-	gps_pwr_devobj->cls = class_create("gps_pwr");
-	if (IS_ERR(gps_pwr_devobj->cls)) {
-		pr_info("Unable to create class, err = %d\n", (int)PTR_ERR(gps_pwr_devobj->cls));
-	goto err_out;
-	}
+	if (!gps_pwr_devobj)
+		return -ENOMEM;
 
 	init_waitqueue_head(&GPS_PWR_wq);
 	has_new_battery_level = false;
 	gps_pwr_open_state = false;
-	conn_pwr_register_event_cb(DRV_TYPE_GPS, (CONN_PWR_EVENT_CB)gps_pwr_msg_cb);
 
-	gps_pwr_devobj->dev = device_create(gps_pwr_devobj->cls,
-		NULL, gps_pwr_devobj->devno, gps_pwr_devobj, "gps_pwr");
-	pr_info("GPS_PWR device init Done\n");
+	ret = alloc_chrdev_region(&gps_pwr_devobj->devno, 0, 1,
+				  GPS_PWR_DEVNAME);
+	if (ret)
+		goto free_device;
+
+	cdev_init(&gps_pwr_devobj->chdev, &gps_pwr_fops);
+	gps_pwr_devobj->chdev.owner = THIS_MODULE;
+	ret = cdev_add(&gps_pwr_devobj->chdev, gps_pwr_devobj->devno, 1);
+	if (ret)
+		goto unregister_region;
+
+	gps_pwr_devobj->cls = class_create(GPS_PWR_DEVNAME);
+	if (IS_ERR(gps_pwr_devobj->cls)) {
+		ret = PTR_ERR(gps_pwr_devobj->cls);
+		goto delete_cdev;
+	}
+
+	gps_pwr_devobj->dev = device_create(gps_pwr_devobj->cls, NULL,
+			gps_pwr_devobj->devno, gps_pwr_devobj, GPS_PWR_DEVNAME);
+	if (IS_ERR(gps_pwr_devobj->dev)) {
+		ret = PTR_ERR(gps_pwr_devobj->dev);
+		goto destroy_class;
+	}
+
+	pr_info("GPS_PWR device init done\n");
 	return 0;
 
-err_out:
-	if (gps_pwr_devobj != NULL) {
-		if (err == 0)
-			cdev_del(&gps_pwr_devobj->chdev);
-		if (ret == 0)
-			unregister_chrdev_region(gps_pwr_devobj->devno, 1);
-		kfree(gps_pwr_devobj);
-		gps_pwr_devobj = NULL;
-	}
-	return -1;
+destroy_class:
+	class_destroy(gps_pwr_devobj->cls);
+delete_cdev:
+	cdev_del(&gps_pwr_devobj->chdev);
+unregister_region:
+	unregister_chrdev_region(gps_pwr_devobj->devno, 1);
+free_device:
+	kfree(gps_pwr_devobj);
+	gps_pwr_devobj = NULL;
+	return ret;
 }
 
 /*****************************************************************************/
@@ -234,6 +245,7 @@ static void gps_pwr_exit(void)
 	}
 
 	pr_info("Unregistering gps_pwr chardev\n");
+	conn_pwr_register_event_cb(DRV_TYPE_GPS, NULL);
 	cdev_del(&gps_pwr_devobj->chdev);
 	unregister_chrdev_region(gps_pwr_devobj->devno, 1);
 	device_destroy(gps_pwr_devobj->cls, gps_pwr_devobj->devno);
