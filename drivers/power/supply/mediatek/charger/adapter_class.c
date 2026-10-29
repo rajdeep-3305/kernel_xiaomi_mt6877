@@ -666,8 +666,10 @@ static ssize_t pdo_n_show(struct device *dev, struct device_attribute *attr, cha
 	struct adapter_device *adapter_dev = to_adapter_device(dev);
 	int i;
 
-	if (adapter_dev != NULL && adapter_dev->ops != NULL && adapter_dev->ops->get_pdos)
-		adapter_dev->ops->get_pdos(adapter_dev);
+	if (!adapter_dev || !adapter_dev->ops || !adapter_dev->ops->get_pdos)
+		return -EOPNOTSUPP;
+	if (adapter_dev->ops->get_pdos(adapter_dev) != MTK_ADAPTER_OK)
+		return -EIO;
 
 	for (i = 0; i < ARRAY_SIZE(dev_attr_pdos); i++) {
 		if (attr == &dev_attr_pdos[i])

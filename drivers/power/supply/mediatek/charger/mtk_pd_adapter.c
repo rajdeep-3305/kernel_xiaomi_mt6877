@@ -511,21 +511,31 @@ static int pd_get_current_state(struct adapter_device *dev)
 static int pd_get_pdos(struct adapter_device *dev)
 {
 	struct mtk_pd_adapter_info *info;
-	struct tcpm_power_cap cap;
+	struct tcpm_power_cap cap = {};
 	int ret, i;
 
 	info = (struct mtk_pd_adapter_info *)adapter_dev_get_drvdata(dev);
 	if (info == NULL || info->tcpc == NULL)
 		return MTK_ADAPTER_ERROR;
 
-	ret = tcpm_inquire_pd_source_cap(info->tcpc, &cap);
+	/* Authentication can read the PDOs before the policy engine is ready. */
+	for (i = 0; i < 50; i++) {
+		ret = tcpm_inquire_pd_source_cap(info->tcpc, &cap);
+		if (ret != TCPM_ERROR_PE_NOT_READY)
+			break;
+		msleep(20);
+	}
 	chr_err("[%s] tcpm_inquire_pd_source_cap is %d.\n", __func__, ret);
 	if (ret)
 		return MTK_ADAPTER_ERROR;
-	for (i = 0; i < 7; i++) {
-		info->adapter_dev->received_pdos[i] = cap.pdos[i];
+	if (!cap.cnt || cap.cnt > ARRAY_SIZE(dev->received_pdos))
+		return MTK_ADAPTER_ERROR;
+
+	memset(dev->received_pdos, 0, sizeof(dev->received_pdos));
+	memcpy(dev->received_pdos, cap.pdos, sizeof(cap.pdos[0]) * cap.cnt);
+	for (i = 0; i < cap.cnt; i++) {
 		chr_err("[%s]: pdo[%d] { received_pdos is %08x, cap.pdos is %08x}\n",
-			__func__, i, info->adapter_dev->received_pdos[i], cap.pdos[i]);
+			__func__, i, dev->received_pdos[i], cap.pdos[i]);
 	}
 
 	return MTK_ADAPTER_OK;
