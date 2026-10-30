@@ -369,8 +369,8 @@ void _wake_up_charger(struct charger_manager *info)
 	spin_lock_irqsave(&info->slock, flags);
 	if (!info->charger_wakelock->active)
 		__pm_stay_awake(info->charger_wakelock);
-	spin_unlock_irqrestore(&info->slock, flags);
 	info->charger_thread_timeout = true;
+	spin_unlock_irqrestore(&info->slock, flags);
 	wake_up_interruptible(&info->wait_que);
 }
 
@@ -1695,7 +1695,7 @@ static int mtk_charger_plug_in(struct charger_manager *info)
 
 	chr_info("%s\n", __func__);
 
-	info->charger_thread_polling = true;
+	WRITE_ONCE(info->charger_thread_polling, true);
 	info->can_charging = true;
 	info->enable_dynamic_cv = true;
 	info->safety_timeout = false;
@@ -1757,13 +1757,18 @@ static int mtk_charger_plug_out(struct charger_manager *info)
 	struct charger_data *pdata2 = &info->chg2_data;
 	union power_supply_propval pval = {0,};
 	struct timespec64 time;
+	unsigned long flags;
 
 	chr_info("%s\n", __func__);
 
 	info->cv_wa_count = 0;
 	info->apdo_max = 0;
-	info->charger_thread_polling = false;
-	alarm_try_to_cancel(&info->charger_timer);
+	WRITE_ONCE(info->charger_thread_polling, false);
+	alarm_cancel(&info->charger_timer);
+	spin_lock_irqsave(&info->slock, flags);
+	info->endtime.tv_sec = 0;
+	info->endtime.tv_nsec = 0;
+	spin_unlock_irqrestore(&info->slock, flags);
 	pdata1->disable_charging_count = 0;
 	pdata1->input_current_limit_by_aicl = -1;
 	pdata2->disable_charging_count = 0;
@@ -2057,16 +2062,9 @@ static void check_cv_vbus(struct charger_manager *info)
 static void update_real_type_data(struct charger_manager *info)
 {
 	static enum power_supply_type real_type_old = POWER_SUPPLY_TYPE_UNKNOWN;
-	int ret = 0;
 	union power_supply_propval real_type = {0,};
-	union power_supply_propval pval = {0,};
 
-	ret = power_supply_get_property(info->charger_psy, POWER_SUPPLY_PROP_CHARGE_TYPE, &pval);
-	if (ret)
-		chr_err("failed to get mtk charger type\n");
-	else
-		info->chr_type = pval.intval;
-
+	/* Keep the type sampled by check_charge_data() for this whole pass. */
 	chr_err("%s: %d\n", __func__, info->chr_type);
 
 	if (info->chr_type == CHARGER_UNKNOWN) {
@@ -2267,9 +2265,9 @@ static void check_charge_data(struct charger_manager *info)
 		}
 	}
 
-	if (info->chr_type == CHARGER_UNKNOWN && chr_type != CHARGER_UNKNOWN)
+	if (!info->charger_thread_polling && chr_type != CHARGER_UNKNOWN)
 		info->charger_status = CHARGER_PLUGIN;
-	else if (info->chr_type != CHARGER_UNKNOWN && chr_type == CHARGER_UNKNOWN)
+	else if (info->charger_thread_polling && chr_type == CHARGER_UNKNOWN)
 		info->charger_status = CHARGER_PLUGOUT;
 	else
 		info->charger_status = CHARGER_UNCHANGED;
@@ -2884,26 +2882,30 @@ static int charger_pm_event(struct notifier_block *notifier,
 			unsigned long pm_event, void *unused)
 {
 	struct timespec64 now;
+	unsigned long flags;
+	bool expired = false;
 
 	switch (pm_event) {
 	case PM_SUSPEND_PREPARE:
-		pinfo->is_suspend = true;
+		WRITE_ONCE(pinfo->is_suspend, true);
 		chr_debug("%s: enter PM_SUSPEND_PREPARE\n", __func__);
 		break;
 	case PM_POST_SUSPEND:
-		pinfo->is_suspend = false;
+		WRITE_ONCE(pinfo->is_suspend, false);
 		chr_debug("%s: enter PM_POST_SUSPEND\n", __func__);
 		ktime_get_boottime_ts64(&now);
 
-		if (timespec64_compare(&now, &pinfo->endtime) >= 0 &&
-			pinfo->endtime.tv_sec != 0 &&
-			pinfo->endtime.tv_nsec != 0) {
-			chr_err("%s: alarm timeout, wake up charger\n",
-				__func__);
+		spin_lock_irqsave(&pinfo->slock, flags);
+		if (pinfo->charger_thread_polling &&
+			(pinfo->endtime.tv_sec || pinfo->endtime.tv_nsec) &&
+			timespec64_compare(&now, &pinfo->endtime) >= 0) {
 			pinfo->endtime.tv_sec = 0;
 			pinfo->endtime.tv_nsec = 0;
-			_wake_up_charger(pinfo);
+			expired = true;
 		}
+		spin_unlock_irqrestore(&pinfo->slock, flags);
+		if (expired)
+			_wake_up_charger(pinfo);
 		break;
 	default:
 		break;
@@ -2924,7 +2926,10 @@ static enum alarmtimer_restart
 	container_of(alarm, struct charger_manager, charger_timer);
 	unsigned long flags;
 
-	if (info->is_suspend == false) {
+	if (!READ_ONCE(info->charger_thread_polling))
+		return ALARMTIMER_NORESTART;
+
+	if (!READ_ONCE(info->is_suspend)) {
 		chr_err("%s: not suspend, wake up charger\n", __func__);
 		_wake_up_charger(info);
 	} else {
@@ -2942,32 +2947,30 @@ static void mtk_charger_start_timer(struct charger_manager *info)
 {
 	struct timespec64 time, time_now;
 	ktime_t ktime;
-	int ret = 0;
+	unsigned long flags;
 
-	/* If the timer was already set, cancel it */
-	ret = alarm_try_to_cancel(&pinfo->charger_timer);
-	if (ret < 0) {
-		chr_err("%s: callback was running, skip timer\n", __func__);
+	if (!info->charger_thread_polling)
 		return;
-	}
+
+	/* The callback only takes slock, which is not held while cancelling. */
+	alarm_cancel(&info->charger_timer);
 
 	ktime_get_boottime_ts64(&time_now);
 	time.tv_sec = info->polling_interval;
 	time.tv_nsec = 0;
+	spin_lock_irqsave(&info->slock, flags);
 	info->endtime = timespec64_add(time_now, time);
 
 	ktime = ktime_set(info->endtime.tv_sec, info->endtime.tv_nsec);
+	spin_unlock_irqrestore(&info->slock, flags);
 
-	chr_err("%s: alarm timer start:%d, %lld %ld\n", __func__, ret,
-		info->endtime.tv_sec, info->endtime.tv_nsec);
-	alarm_start(&pinfo->charger_timer, ktime);
+	alarm_start(&info->charger_timer, ktime);
 }
 
 static void mtk_charger_init_timer(struct charger_manager *info)
 {
 	alarm_init(&info->charger_timer, ALARM_BOOTTIME,
 			mtk_charger_alarm_timer_func);
-	mtk_charger_start_timer(info);
 
 #ifdef CONFIG_PM
 	if (register_pm_notifier(&charger_pm_notifier_func))
@@ -3065,7 +3068,7 @@ static int charger_routine_thread(void *arg)
 
 	while (1) {
 		ret = wait_event_interruptible(info->wait_que,
-			(info->charger_thread_timeout == true));
+			READ_ONCE(info->charger_thread_timeout));
 		if (ret < 0) {
 			chr_err("%s: wait event been interrupted(%d)\n", __func__, ret);
 			continue;
@@ -3075,9 +3078,8 @@ static int charger_routine_thread(void *arg)
 		spin_lock_irqsave(&info->slock, flags);
 		if (!info->charger_wakelock->active)
 			__pm_stay_awake(info->charger_wakelock);
-		spin_unlock_irqrestore(&info->slock, flags);
-
 		info->charger_thread_timeout = false;
+		spin_unlock_irqrestore(&info->slock, flags);
 
 		check_charge_data(info);
 		check_battery_connector(info);
@@ -3116,7 +3118,8 @@ static int charger_routine_thread(void *arg)
 			chr_debug("disable charging\n");*/
 
 		spin_lock_irqsave(&info->slock, flags);
-		__pm_relax(info->charger_wakelock);
+		if (!info->charger_thread_timeout)
+			__pm_relax(info->charger_wakelock);
 		spin_unlock_irqrestore(&info->slock, flags);
 		chr_debug("%s end , %d\n",
 			__func__, info->charger_thread_timeout);
