@@ -25,6 +25,7 @@
 #include <linux/init.h>		/* For init/exit macros */
 #include <linux/module.h>	/* For MODULE_ marcros  */
 #include <linux/fs.h>
+#include <linux/freezer.h>
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -3064,10 +3065,12 @@ static int charger_routine_thread(void *arg)
 	unsigned long flags = 0;
 	//bool is_charger_on = false;
 	int ret;
+
+	set_freezable();
 	init_charger_hw_limit(info);
 
 	while (1) {
-		ret = wait_event_interruptible(info->wait_que,
+		ret = wait_event_freezable(info->wait_que,
 			READ_ONCE(info->charger_thread_timeout));
 		if (ret < 0) {
 			chr_err("%s: wait event been interrupted(%d)\n", __func__, ret);
