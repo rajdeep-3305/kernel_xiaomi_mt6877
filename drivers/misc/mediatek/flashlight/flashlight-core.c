@@ -49,6 +49,12 @@
 static DEFINE_MUTEX(fl_mutex);
 LIST_HEAD(flashlight_list);
 
+struct flashlight_file_data {
+	bool controls_output;
+};
+
+static unsigned int flashlight_control_users;
+
 /* duty current */
 static struct flashlight_arg duty_current_arg;
 
@@ -897,11 +903,24 @@ static long _flashlight_ioctl(
 		pr_debug("FLASH_IOC_SET_ONOFF(%d,%d,%d): %d\n",
 				type, ct, part, fl_arg.arg);
 		mutex_lock(&fl_mutex);
+		if (fl_arg.arg) {
+			struct flashlight_file_data *data = file->private_data;
+
+			if (!data->controls_output) {
+				data->controls_output = true;
+				flashlight_control_users++;
+			}
+		}
 		ret = fl_enable(fdev, fl_arg.arg);
 		mutex_unlock(&fl_mutex);
 		break;
 
 	case FLASH_IOC_GET_DUTY_NUMBER:
+	case FLASH_IOC_GET_MAX_TORCH_DUTY:
+	case FLASH_IOC_GET_CURRENT_TORCH_DUTY:
+	case FLASH_IOC_GET_PRE_ON_TIME_MS:
+	case FLASH_IOC_GET_PRE_ON_TIME_MS_DUTY:
+	case FLASH_IOC_GET_HW_TIMEOUT:
 	case FLASH_IOC_GET_DUTY_CURRENT:
 	case FLASH_IOC_GET_HW_FAULT:
 	case FLASH_IOC_GET_HW_FAULT2:
@@ -952,6 +971,12 @@ static long flashlight_compat_ioctl(
 static int flashlight_open(struct inode *inode, struct file *file)
 {
 	struct flashlight_dev *fdev;
+	struct flashlight_file_data *data;
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
+	file->private_data = data;
 
 	mutex_lock(&fl_mutex);
 	list_for_each_entry(fdev, &flashlight_list, node) {
@@ -969,19 +994,27 @@ static int flashlight_open(struct inode *inode, struct file *file)
 
 static int flashlight_release(struct inode *inode, struct file *file)
 {
+	struct flashlight_file_data *data = file->private_data;
 	struct flashlight_dev *fdev;
+	bool disable = false;
 
 	mutex_lock(&fl_mutex);
+	if (data->controls_output)
+		disable = --flashlight_control_users == 0;
 	list_for_each_entry(fdev, &flashlight_list, node) {
 		if (!fdev->ops)
 			continue;
 
 		pr_debug("Release(%d,%d,%d)\n", fdev->dev_id.type,
 				fdev->dev_id.ct, fdev->dev_id.part);
-		fl_enable(fdev, 0);
+		/* Strength queries must not turn off another client's torch. */
+		if (disable)
+			fl_enable(fdev, 0);
 		fdev->ops->flashlight_release();
 	}
 	mutex_unlock(&fl_mutex);
+	file->private_data = NULL;
+	kfree(data);
 
 	return 0;
 }

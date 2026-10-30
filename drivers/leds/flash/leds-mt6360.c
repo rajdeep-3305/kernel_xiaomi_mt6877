@@ -12,6 +12,7 @@
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
+#include <linux/slab.h>
 #include <media/v4l2-flash-led-class.h>
 
 #if IS_ENABLED(CONFIG_MTK_FLASHLIGHT)
@@ -103,9 +104,10 @@ struct mt6360_led {
 #if IS_ENABLED(CONFIG_MTK_FLASHLIGHT)
 	struct flashlight_device_id flashlight_id;
 	int flashlight_level;
-	bool flashlight_enabled;
-	bool flashlight_strobe;
+	int flashlight_torch_level;
+	struct led_classdev flashlight_torch;
 	bool flashlight_registered;
+	bool flashlight_torch_registered;
 #endif
 };
 
@@ -194,10 +196,11 @@ static int mt6360_torch_brightness_set(struct led_classdev *lcdev,
 	struct mt6360_priv *priv = led->priv;
 	u32 enable_mask = MT6360_TORCHEN_MASK | MT6360_FLCSEN_MASK(led->led_no);
 	u32 val = level ? MT6360_FLCSEN_MASK(led->led_no) : 0;
-	u32 prev = priv->fled_torch_used, curr;
+	u32 prev, curr;
 	int ret;
 
 	mutex_lock(&priv->lock);
+	prev = priv->fled_torch_used;
 
 	/*
 	 * Only one set of flash control logic, use the flag to avoid strobe is
@@ -232,6 +235,12 @@ static int mt6360_torch_brightness_set(struct led_classdev *lcdev,
 		goto unlock;
 
 	priv->fled_torch_used = curr;
+#if IS_ENABLED(CONFIG_MTK_FLASHLIGHT)
+	if (level)
+		/* MTK duties use 25 mA steps; native LED levels use 12.5 mA. */
+		led->flashlight_torch_level = min_t(u32, (level - 1) / 2,
+					 MT6360_FLASHLIGHT_TORCH_LEVELS - 1);
+#endif
 
 unlock:
 	mutex_unlock(&priv->lock);
@@ -273,10 +282,11 @@ static int mt6360_strobe_set(struct led_classdev_flash *fl_cdev, bool state)
 	struct led_flash_setting *s = &fl_cdev->brightness;
 	u32 enable_mask = MT6360_STROBEN_MASK | MT6360_FLCSEN_MASK(led->led_no);
 	u32 val = state ? MT6360_FLCSEN_MASK(led->led_no) : 0;
-	u32 prev = priv->fled_strobe_used, curr;
+	u32 prev, curr;
 	int ret;
 
 	mutex_lock(&priv->lock);
+	prev = priv->fled_strobe_used;
 
 	/*
 	 * Only one set of flash control logic, use the flag to avoid torch is
@@ -455,55 +465,88 @@ static void mt6360_flashlight_set_scenario_locked(int scenario)
 	}
 }
 
+/* Share the native LED/V4L2 state instead of caching a second enable state. */
+static bool mt6360_flashlight_is_enabled(struct mt6360_led *led, bool *strobe)
+{
+	struct mt6360_priv *priv = led->priv;
+	bool enabled;
+
+	mutex_lock(&priv->lock);
+	*strobe = !!(priv->fled_strobe_used & BIT(led->led_no));
+	enabled = *strobe || (priv->fled_torch_used & BIT(led->led_no));
+	mutex_unlock(&priv->lock);
+
+	return enabled;
+}
+
 static int mt6360_flashlight_disable(struct mt6360_led *led)
 {
-	int ret;
+	bool strobe;
 
-	if (!led->flashlight_enabled)
+	if (!mt6360_flashlight_is_enabled(led, &strobe))
 		return 0;
+	if (strobe)
+		return mt6360_strobe_set(&led->flash, false);
+	return mt6360_torch_brightness_set(&led->flash.led_cdev, LED_OFF);
+}
 
-	if (led->flashlight_strobe)
-		ret = mt6360_strobe_set(&led->flash, false);
-	else
-		ret = mt6360_torch_brightness_set(&led->flash.led_cdev,
-						    LED_OFF);
-	if (!ret)
-		led->flashlight_enabled = false;
+static int mt6360_flashlight_apply_torch(struct mt6360_led *led, int level)
+{
+	struct led_classdev *lcdev = &led->flash.led_cdev;
+	u32 current_ua = mt6360_flashlight_current_ma[level] * 1000;
+	u32 brightness;
 
-	return ret;
+	brightness = (current_ua - MT6360_ITORCH_MINUA) /
+		     MT6360_ITORCH_STEPUA + 1;
+	return mt6360_torch_brightness_set(lcdev,
+					min(brightness, lcdev->max_brightness));
 }
 
 static int mt6360_flashlight_enable(struct mt6360_led *led)
 {
 	struct led_classdev_flash *flash = &led->flash;
-	struct led_classdev *lcdev = &flash->led_cdev;
-	u32 current_ua, brightness;
-	int ret;
+	u32 current_ua;
+	bool strobe;
 
-	if (led->flashlight_enabled)
+	if (mt6360_flashlight_is_enabled(led, &strobe))
 		return 0;
 
 	current_ua = mt6360_flashlight_current_ma[led->flashlight_level] * 1000;
-	if (led->flashlight_level < MT6360_FLASHLIGHT_TORCH_LEVELS) {
-		brightness = (current_ua - MT6360_ITORCH_MINUA) /
-			     MT6360_ITORCH_STEPUA + 1;
-		brightness = min(brightness, lcdev->max_brightness);
-		ret = mt6360_torch_brightness_set(lcdev, brightness);
+	if (led->flashlight_level < MT6360_FLASHLIGHT_TORCH_LEVELS)
+		return mt6360_flashlight_apply_torch(led, led->flashlight_level);
+
+	flash->brightness.val = clamp_val(current_ua, flash->brightness.min,
+					 flash->brightness.max);
+	return mt6360_strobe_set(flash, true);
+}
+
+static int mt6360_flashlight_set_level(struct mt6360_led *led, int level)
+{
+	bool enabled, strobe;
+	int ret;
+
+	level = clamp(level, 0, MT6360_FLASHLIGHT_LEVELS - 1);
+	enabled = mt6360_flashlight_is_enabled(led, &strobe);
+	if (enabled && !strobe && level < MT6360_FLASHLIGHT_TORCH_LEVELS) {
+		/* A strength change must not cycle the torch off and on. */
+		ret = mt6360_flashlight_apply_torch(led, level);
 		if (!ret)
-			led->flashlight_strobe = false;
-	} else {
-		flash->brightness.val = clamp_val(current_ua,
-						  flash->brightness.min,
-						  flash->brightness.max);
-		ret = mt6360_strobe_set(flash, true);
-		if (!ret)
-			led->flashlight_strobe = true;
+			led->flashlight_level = level;
+		return ret;
+	}
+	if (enabled) {
+		ret = mt6360_flashlight_disable(led);
+		if (ret)
+			return ret;
 	}
 
-	if (!ret)
-		led->flashlight_enabled = true;
-
-	return ret;
+	led->flashlight_level = level;
+	if (level < MT6360_FLASHLIGHT_TORCH_LEVELS) {
+		mutex_lock(&led->priv->lock);
+		led->flashlight_torch_level = level;
+		mutex_unlock(&led->priv->lock);
+	}
+	return enabled ? mt6360_flashlight_enable(led) : 0;
 }
 
 static int mt6360_flashlight_open(void)
@@ -535,7 +578,6 @@ static int mt6360_flashlight_ioctl(unsigned int cmd, unsigned long arg)
 	u64 timeout_us;
 	u32 fault;
 	int level, ret = 0;
-	bool enabled;
 
 	if (!flash_arg || flash_arg->channel < 0 ||
 	    flash_arg->channel >= ARRAY_SIZE(mt6360_flashlight_leds))
@@ -560,17 +602,7 @@ static int mt6360_flashlight_ioctl(unsigned int cmd, unsigned long arg)
 		ret = mt6360_timeout_set(&led->flash, timeout_us);
 		break;
 	case FLASH_IOC_SET_DUTY:
-		level = clamp(flash_arg->arg, 0,
-			      MT6360_FLASHLIGHT_LEVELS - 1);
-		enabled = led->flashlight_enabled;
-		if (enabled) {
-			ret = mt6360_flashlight_disable(led);
-			if (ret)
-				break;
-		}
-		led->flashlight_level = level;
-		if (enabled)
-			ret = mt6360_flashlight_enable(led);
+		ret = mt6360_flashlight_set_level(led, flash_arg->arg);
 		break;
 	case FLASH_IOC_SET_SCENARIO:
 		mt6360_flashlight_set_scenario_locked(flash_arg->arg);
@@ -590,6 +622,15 @@ static int mt6360_flashlight_ioctl(unsigned int cmd, unsigned long arg)
 		break;
 	case FLASH_IOC_GET_MAX_TORCH_DUTY:
 		flash_arg->arg = MT6360_FLASHLIGHT_TORCH_LEVELS - 1;
+		break;
+	case FLASH_IOC_GET_CURRENT_TORCH_DUTY:
+		mutex_lock(&led->priv->lock);
+		flash_arg->arg = led->flashlight_torch_level;
+		mutex_unlock(&led->priv->lock);
+		break;
+	case FLASH_IOC_GET_PRE_ON_TIME_MS:
+	case FLASH_IOC_GET_PRE_ON_TIME_MS_DUTY:
+		flash_arg->arg = 0;
 		break;
 	case FLASH_IOC_GET_DUTY_CURRENT:
 		level = clamp(flash_arg->arg, 0,
@@ -666,6 +707,41 @@ static struct flashlight_operations mt6360_flashlight_ops = {
 	.flashlight_set_driver = mt6360_flashlight_set_driver,
 };
 
+static int mt6360_flashlight_torch_set(struct led_classdev *cdev,
+				     enum led_brightness brightness)
+{
+	struct mt6360_led *led =
+		container_of(cdev, struct mt6360_led, flashlight_torch);
+	int ret;
+
+	mutex_lock(&mt6360_flashlight_lock);
+	if (brightness == LED_OFF) {
+		ret = mt6360_flashlight_disable(led);
+	} else {
+		ret = mt6360_flashlight_set_level(led,
+			clamp_t(int, brightness, 1,
+				MT6360_FLASHLIGHT_TORCH_LEVELS - 1));
+		if (!ret)
+			ret = mt6360_flashlight_enable(led);
+	}
+	mutex_unlock(&mt6360_flashlight_lock);
+	return ret;
+}
+
+static enum led_brightness mt6360_flashlight_torch_get(struct led_classdev *cdev)
+{
+	struct mt6360_led *led =
+		container_of(cdev, struct mt6360_led, flashlight_torch);
+	struct mt6360_priv *priv = led->priv;
+	enum led_brightness brightness = LED_OFF;
+
+	mutex_lock(&priv->lock);
+	if (priv->fled_torch_used & BIT(led->led_no))
+		brightness = led->flashlight_torch_level;
+	mutex_unlock(&priv->lock);
+	return brightness;
+}
+
 static int mt6360_flashlight_register(struct mt6360_led *led)
 {
 	int channel = led->led_no - MT6360_LED_FLASH1;
@@ -679,6 +755,7 @@ static int mt6360_flashlight_register(struct mt6360_led *led)
 	led->flashlight_id.part = 0;
 	led->flashlight_id.channel = channel;
 	led->flashlight_id.decouple = 0;
+	led->flashlight_torch_level = 6;
 	strscpy(led->flashlight_id.name, MT6360_FLASHLIGHT_NAME,
 		sizeof(led->flashlight_id.name));
 
@@ -700,7 +777,28 @@ static int mt6360_flashlight_register(struct mt6360_led *led)
 	}
 
 	led->flashlight_registered = true;
+	led->flashlight_torch.name = devm_kasprintf(led->priv->dev, GFP_KERNEL,
+						   "torch-light%d", channel);
+	if (!led->flashlight_torch.name) {
+		ret = -ENOMEM;
+		goto unregister_flashlight;
+	}
+	led->flashlight_torch.max_brightness = MT6360_FLASHLIGHT_TORCH_LEVELS - 1;
+	led->flashlight_torch.brightness_set_blocking = mt6360_flashlight_torch_set;
+	led->flashlight_torch.brightness_get = mt6360_flashlight_torch_get;
+	ret = devm_led_classdev_register(led->priv->dev, &led->flashlight_torch);
+	if (ret)
+		goto unregister_flashlight;
+	led->flashlight_torch_registered = true;
 	return 0;
+
+unregister_flashlight:
+	flashlight_dev_unregister_by_device_id(&led->flashlight_id);
+	mutex_lock(&mt6360_flashlight_lock);
+	mt6360_flashlight_leds[channel] = NULL;
+	led->flashlight_registered = false;
+	mutex_unlock(&mt6360_flashlight_lock);
+	return ret;
 }
 
 static void mt6360_flashlight_unregister(struct mt6360_led *led)
@@ -710,6 +808,10 @@ static void mt6360_flashlight_unregister(struct mt6360_led *led)
 	if (!led->flashlight_registered)
 		return;
 
+	if (led->flashlight_torch_registered) {
+		devm_led_classdev_unregister(led->priv->dev, &led->flashlight_torch);
+		led->flashlight_torch_registered = false;
+	}
 	flashlight_dev_unregister_by_device_id(&led->flashlight_id);
 
 	mutex_lock(&mt6360_flashlight_lock);
