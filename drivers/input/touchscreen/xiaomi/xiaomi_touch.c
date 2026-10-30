@@ -6,11 +6,98 @@
  */
 
 #include "xiaomi_touch.h"
+#include <linux/pm_wakeup.h>
 
 static struct xiaomi_touch_pdata *touch_pdata;
 static struct xiaomi_touch *xiaomi_touch_device;
 
 #define RAW_SIZE (PAGE_SIZE * 12)
+
+struct xiaomi_gesture_sensor {
+	struct device_attribute enabled_attr;
+	struct device_attribute state_attr;
+	int mode;
+	bool managed;
+	bool armed;
+	bool pending;
+};
+
+static ssize_t gesture_enabled_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct xiaomi_gesture_sensor *sensor =
+		container_of(attr, struct xiaomi_gesture_sensor, enabled_attr);
+	struct xiaomi_touch_pdata *pdata = dev_get_drvdata(dev);
+	ssize_t ret;
+
+	mutex_lock(&pdata->device->mutex);
+	ret = sysfs_emit(buf, "%d\n", sensor->armed);
+	mutex_unlock(&pdata->device->mutex);
+	return ret;
+}
+
+static ssize_t gesture_enabled_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct xiaomi_gesture_sensor *sensor =
+		container_of(attr, struct xiaomi_gesture_sensor, enabled_attr);
+	struct xiaomi_touch_pdata *pdata = dev_get_drvdata(dev);
+	struct xiaomi_touch_interface *interface;
+	bool enabled;
+	int ret;
+
+	ret = kstrtobool(buf, &enabled);
+	if (ret)
+		return ret;
+
+	mutex_lock(&pdata->device->mutex);
+	interface = pdata->touch_data[0];
+	if (!interface || !interface->setModeValue) {
+		ret = -ENODEV;
+		goto out;
+	}
+
+	ret = interface->setModeValue(sensor->mode, enabled);
+	if (ret < 0)
+		goto out;
+	sensor->managed = true;
+	sensor->armed = enabled;
+	sensor->pending = false;
+out:
+	mutex_unlock(&pdata->device->mutex);
+	return ret < 0 ? ret : count;
+}
+
+static ssize_t gesture_state_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct xiaomi_gesture_sensor *sensor =
+		container_of(attr, struct xiaomi_gesture_sensor, state_attr);
+	struct xiaomi_touch_pdata *pdata = dev_get_drvdata(dev);
+	ssize_t ret;
+
+	mutex_lock(&pdata->device->mutex);
+	ret = sysfs_emit(buf, "%d\n", sensor->pending);
+	sensor->pending = false;
+	mutex_unlock(&pdata->device->mutex);
+	return ret;
+}
+
+#define XIAOMI_GESTURE_SENSOR(_name, _mode) { \
+	.enabled_attr = __ATTR(gesture_##_name##_enabled, 0644, \
+			      gesture_enabled_show, gesture_enabled_store), \
+	.state_attr = __ATTR(gesture_##_name##_state, 0444, \
+			    gesture_state_show, NULL), \
+	.mode = _mode, \
+}
+
+static struct xiaomi_gesture_sensor gesture_sensors[] = {
+	[XIAOMI_TOUCH_DOUBLE_TAP] =
+		XIAOMI_GESTURE_SENSOR(double_tap, Touch_Doubletap_Mode),
+	[XIAOMI_TOUCH_SINGLE_TAP] =
+		XIAOMI_GESTURE_SENSOR(single_tap, Touch_Aod_Enable),
+};
+
 
 static int xiaomi_touch_dev_open(struct inode *inode, struct file *file)
 {
@@ -205,6 +292,37 @@ static struct xiaomi_touch xiaomi_touch_dev = {
 	.fod_press_status_mutex = __MUTEX_INITIALIZER(xiaomi_touch_dev.fod_press_status_mutex),
 	.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(xiaomi_touch_dev.wait_queue),
 };
+
+bool xiaomi_touch_report_gesture(enum xiaomi_touch_gesture gesture)
+{
+	struct xiaomi_gesture_sensor *sensor;
+	struct xiaomi_touch *dev;
+	bool managed;
+
+	if ((unsigned int)gesture >= XIAOMI_TOUCH_GESTURE_COUNT)
+		return false;
+
+	dev = &xiaomi_touch_dev;
+	sensor = &gesture_sensors[gesture];
+	mutex_lock(&dev->mutex);
+	if (!touch_pdata) {
+		mutex_unlock(&dev->mutex);
+		return false;
+	}
+	managed = sensor->managed;
+	if (managed && sensor->armed) {
+		/* Latch one event until userspace consumes it and rearms the sensor. */
+		sensor->armed = false;
+		sensor->pending = true;
+		/* Cover the handoff to the sensor HAL's scoped wake lock. */
+		pm_wakeup_event(dev->dev, 1000);
+		sysfs_notify(&dev->dev->kobj, NULL,
+			     sensor->state_attr.attr.name);
+	}
+	mutex_unlock(&dev->mutex);
+	return managed;
+}
+EXPORT_SYMBOL_GPL(xiaomi_touch_report_gesture);
 
 struct xiaomi_touch *xiaomi_touch_dev_get(int minor)
 {
@@ -1061,6 +1179,10 @@ static DEVICE_ATTR(resolution_factor, 0644, resolution_factor_show, NULL);
 static DEVICE_ATTR(fod_press_status, (S_IRUGO | S_IWUSR | S_IWGRP), fod_press_status_show, NULL);
 
 static struct attribute *touch_attr_group[] = {
+	&gesture_sensors[XIAOMI_TOUCH_DOUBLE_TAP].enabled_attr.attr,
+	&gesture_sensors[XIAOMI_TOUCH_DOUBLE_TAP].state_attr.attr,
+	&gesture_sensors[XIAOMI_TOUCH_SINGLE_TAP].enabled_attr.attr,
+	&gesture_sensors[XIAOMI_TOUCH_SINGLE_TAP].state_attr.attr,
 	&dev_attr_enable_touch_raw.attr,
 	&dev_attr_enable_touch_delta.attr,
 	&dev_attr_touch_thp_cmd.attr,
@@ -1285,6 +1407,9 @@ static int xiaomi_touch_probe(struct platform_device *pdev)
 	dev_set_drvdata(xiaomi_touch_dev.dev, pdata);
 
 	touch_pdata = pdata;
+	ret = device_init_wakeup(xiaomi_touch_dev.dev, true);
+	if (ret)
+		goto sys_group_err;
 
 	xiaomi_touch_dev.attrs.attrs = touch_attr_group;
 	ret = sysfs_create_group(&xiaomi_touch_dev.dev->kobj, &xiaomi_touch_dev.attrs);
@@ -1301,6 +1426,10 @@ static int xiaomi_touch_probe(struct platform_device *pdev)
 	return ret;
 
 sys_group_err:
+	mutex_lock(&xiaomi_touch_dev.mutex);
+	touch_pdata = NULL;
+	device_init_wakeup(xiaomi_touch_dev.dev, false);
+	mutex_unlock(&xiaomi_touch_dev.mutex);
 	if (pdata->touch_data[0]) {
 		kfree(pdata->touch_data[0]);
 		pdata->touch_data[0] = NULL;
@@ -1340,6 +1469,8 @@ static int xiaomi_touch_remove(struct platform_device *pdev)
 	int i;
 
 	sysfs_remove_group(&xiaomi_touch_dev.dev->kobj, &xiaomi_touch_dev.attrs);
+	mutex_lock(&xiaomi_touch_dev.mutex);
+	device_init_wakeup(xiaomi_touch_dev.dev, false);
 	device_destroy(xiaomi_touch_dev.class, 'T');
 	class_destroy(xiaomi_touch_dev.class);
 	xiaomi_touch_dev.class = NULL;
@@ -1374,6 +1505,8 @@ static int xiaomi_touch_remove(struct platform_device *pdev)
 		touch_pdata->touch_data[1] = NULL;
 	}
 
+	touch_pdata = NULL;
+	mutex_unlock(&xiaomi_touch_dev.mutex);
 	return 0;
 }
 

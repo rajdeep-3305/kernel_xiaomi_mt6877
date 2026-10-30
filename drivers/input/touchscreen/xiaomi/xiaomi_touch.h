@@ -206,5 +206,14 @@ extern void last_touch_events_collect(int slot, int state);
 
 int xiaomi_touch_set_suspend_state(int state);
 
+enum xiaomi_touch_gesture {
+	XIAOMI_TOUCH_DOUBLE_TAP,
+	XIAOMI_TOUCH_SINGLE_TAP,
+	XIAOMI_TOUCH_GESTURE_COUNT,
+};
+
+/* True when the sensor interface owns this gesture, including while disarmed. */
+bool xiaomi_touch_report_gesture(enum xiaomi_touch_gesture gesture);
+
 extern void thp_send_cmd_to_hal(int cmd, int value);
 #endif

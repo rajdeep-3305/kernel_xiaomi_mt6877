@@ -235,7 +235,7 @@ static int gsx_gesture_ist(struct goodix_ts_core *cd,
 	struct goodix_ts_hw_ops *hw_ops = cd->hw_ops;
 	struct goodix_ts_event gs_event = {0};
 	int ret;
-	int key_value;
+	int key_value = 0;
 	unsigned int fodx, fody, fod_id;
 	unsigned int overlay_area;
 	u8 gesture_data[32];
@@ -318,14 +318,24 @@ static int gsx_gesture_ist(struct goodix_ts_core *cd,
 		ts_info("GTP got valid gesture type 0x%x", gs_event.gesture_type);
 		if (cd->double_wakeup && gs_event.gesture_type == 0xcc) {
 			ts_info("GTP gesture report double tap");
+#ifdef GOODIX_XIAOMI_TOUCHFEATURE
+			if (xiaomi_touch_report_gesture(XIAOMI_TOUCH_DOUBLE_TAP))
+				goto re_send_ges_cmd;
+#endif
 			key_value = KEY_WAKEUP;
 		}
 		if ((cd->fod_icon_status || cd->aod_status) &&
 				cd->nonui_status == 0 &&
 				gs_event.gesture_type == 0x4c) {
 			ts_info("GTP gesture report single tap");
+#ifdef GOODIX_XIAOMI_TOUCHFEATURE
+			if (xiaomi_touch_report_gesture(XIAOMI_TOUCH_SINGLE_TAP))
+				goto re_send_ges_cmd;
+#endif
 			key_value = KEY_GOTO;
 		}
+		if (!key_value)
+			goto re_send_ges_cmd;
 		input_report_key(cd->input_dev, key_value, 1);
 		input_sync(cd->input_dev);
 		input_report_key(cd->input_dev, key_value, 0);

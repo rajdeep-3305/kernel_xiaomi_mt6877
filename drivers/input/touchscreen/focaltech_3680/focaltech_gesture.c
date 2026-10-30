@@ -36,6 +36,9 @@
  * 1.Included header files
  *****************************************************************************/
 #include "focaltech_core.h"
+#ifdef FTS_XIAOMI_TOUCHFEATURE
+#include "../xiaomi/xiaomi_touch.h"
+#endif
 
 /******************************************************************************
  * Private constant and macro definitions using #define
@@ -262,9 +265,17 @@ static void fts_gesture_report(struct input_dev *input_dev, int gesture_id)
 		gesture = KEY_GESTURE_DOWN;
 		break;
 	case GESTURE_DOUBLECLICK:
+#ifdef FTS_XIAOMI_TOUCHFEATURE
+		if (xiaomi_touch_report_gesture(XIAOMI_TOUCH_DOUBLE_TAP))
+			return;
+#endif
 		gesture = KEY_WAKEUP;
 		break;
 	case GESTURE_SINGLETAP:
+#ifdef FTS_XIAOMI_TOUCHFEATURE
+		if (xiaomi_touch_report_gesture(XIAOMI_TOUCH_SINGLE_TAP))
+			return;
+#endif
 		gesture = KEY_GOTO;
 		break;
 	case GESTURE_O:
