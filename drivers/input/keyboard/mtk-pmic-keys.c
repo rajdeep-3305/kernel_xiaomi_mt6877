@@ -146,6 +146,7 @@ struct mtk_pmic_keys_info {
 	int irq;
 	int release_irq_num;
 	bool wakeup:1;
+	bool wake_enabled:1;
 };
 
 struct mtk_pmic_keys {
@@ -295,11 +296,19 @@ static int mtk_pmic_key_setup(struct mtk_pmic_keys *keys,
 static int __maybe_unused mtk_pmic_keys_suspend(struct device *dev)
 {
 	struct mtk_pmic_keys *keys = dev_get_drvdata(dev);
-	int index;
+	int index, ret;
 
 	for (index = 0; index < MTK_PMIC_MAX_KEY_COUNT; index++) {
-		if (keys->keys[index].wakeup)
-			enable_irq_wake(keys->keys[index].irq);
+		struct mtk_pmic_keys_info *key = &keys->keys[index];
+
+		if (!key->wakeup || key->wake_enabled)
+			continue;
+		ret = enable_irq_wake(key->irq);
+		if (ret)
+			dev_warn_ratelimited(dev, "Failed to enable IRQ %d wake: %d\n",
+					     key->irq, ret);
+		else
+			key->wake_enabled = true;
 	}
 
 	return 0;
@@ -311,8 +320,12 @@ static int __maybe_unused mtk_pmic_keys_resume(struct device *dev)
 	int index;
 
 	for (index = 0; index < MTK_PMIC_MAX_KEY_COUNT; index++) {
-		if (keys->keys[index].wakeup)
-			disable_irq_wake(keys->keys[index].irq);
+		struct mtk_pmic_keys_info *key = &keys->keys[index];
+
+		if (key->wake_enabled) {
+			disable_irq_wake(key->irq);
+			key->wake_enabled = false;
+		}
 	}
 
 	return 0;
