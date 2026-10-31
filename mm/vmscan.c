@@ -4510,6 +4510,8 @@ static void lru_gen_shrink_lruvec(struct lruvec *lruvec, struct scan_control *sc
 	unsigned long reclaimed = sc->nr_reclaimed;
 	struct pglist_data *pgdat = lruvec_pgdat(lruvec);
 
+	lru_add_drain();
+
 	blk_start_plug(&plug);
 
 	if (current_is_kswapd())
