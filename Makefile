@@ -682,7 +682,10 @@ KBUILD_CFLAGS	+= $(call cc-disable-warning, address-of-packed-member)
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS   += -Os
 else
-KBUILD_CFLAGS   += -O2
+KBUILD_CFLAGS   += -O3
+ifeq ($(cc-name),clang)
+KBUILD_CFLAGS += $(call cc-option,-mcpu=cortex-a76.cortex-a55)
+endif
 endif
 
 ifdef CONFIG_LLVM_POLLY
@@ -695,12 +698,6 @@ KBUILD_CFLAGS	+= -mllvm -polly \
 		           -mllvm -polly-detect-keep-going \
 		           -mllvm -polly-vectorizer=stripmine \
 		           -mllvm -polly-invariant-load-hoisting
-endif
-
-ifdef CONFIG_INLINE_OPTIMIZATION
-KBUILD_CFLAGS	+= -mllvm -inline-threshold=2000
-KBUILD_CFLAGS	+= -mllvm -inlinehint-threshold=3000
-KBUILD_CFLAGS   += -mllvm -unroll-threshold=1200
 endif
 
 # Tell gcc to never replace conditional load with a non-conditional one
@@ -752,6 +749,10 @@ endif
 # These warnings generated too much noise in a regular build.
 # Use make W=1 to enable them (see scripts/Makefile.extrawarn)
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-but-set-variable)
+
+ifeq ($(ld-name),lld)
+LDFLAGS += -O3
+endif
 
 KBUILD_CFLAGS += $(call cc-disable-warning, unused-const-variable)
 
@@ -861,12 +862,6 @@ else
 lto-clang-flags	:= -flto
 endif
 lto-clang-flags += -fvisibility=default $(call cc-option, -fsplit-lto-unit)
-
-# Limit inlining across translation units to reduce binary size
-LD_FLAGS_LTO_CLANG := -mllvm -import-instr-limit=5
-
-KBUILD_LDFLAGS += $(LD_FLAGS_LTO_CLANG)
-KBUILD_LDFLAGS_MODULE += $(LD_FLAGS_LTO_CLANG)
 
 KBUILD_LDFLAGS_MODULE += -T scripts/module-lto.lds
 
