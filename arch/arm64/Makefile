@@ -63,8 +63,6 @@ else
 KBUILD_CFLAGS	+= $(call cc-ifversion, -ge, 0500, -DCONFIG_ARCH_SUPPORTS_INT128)
 endif
 
-KBUILD_CFLAGS += $(call cc-option,-mcpu=cortex-a76.cortex-a55)
-
 ifeq ($(CONFIG_SHADOW_CALL_STACK), y)
 KBUILD_CFLAGS	+= -ffixed-x18
 endif
