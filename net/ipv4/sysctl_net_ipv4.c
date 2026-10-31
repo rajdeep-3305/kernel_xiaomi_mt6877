@@ -1249,7 +1249,7 @@ static __net_init int ipv4_sysctl_init_net(struct net *net)
 			goto err_alloc;
 
 		/* Update the variables to point into the current struct net */
-		for (i = 0; i < ARRAY_SIZE(ipv4_net_table) - 1; i++)
+		for (i = 0; i < ARRAY_SIZE(ipv4_net_table) - 1; i++) {
 			table[i].data += (void *)net - (void *)&init_net;
 			if (table[i].extra2 >= (void *)&init_net.ipv4 &&
 			    table[i].extra2 < (void *)(&init_net.ipv4 + 1))
