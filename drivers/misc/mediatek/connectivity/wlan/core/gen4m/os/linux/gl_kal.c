@@ -8064,9 +8064,16 @@ kalGetIPv6Address(struct net_device *prDev,
 	uint32_t u4NumIPv6 = 0;
 	uint32_t u4AddrLen = IPV6_ADDR_LEN;
 	struct inet6_ifaddr *prIfa;
+	struct inet6_dev *prInet6Dev;
 
 	/* 4 <1> Sanity check of netDevice */
-	if (!prDev || !(prDev->ip6_ptr)) {
+	if (!prDev || !u4MaxNumOfAddr) {
+		*pu4NumOfIpv6Addr = 0;
+		return FALSE;
+	}
+
+	prInet6Dev = in6_dev_get(prDev);
+	if (!prInet6Dev) {
 		DBGLOG(INIT, INFO,
 		       "IPv6 address is not available for dev(0x%p)\n", prDev);
 
@@ -8076,7 +8083,12 @@ kalGetIPv6Address(struct net_device *prDev,
 
 
 	/* 4 <2> copy the IPv6 address */
-	LIST_FOR_EACH_IPV6_ADDR(prIfa, prDev->ip6_ptr) {
+	read_lock_bh(&prInet6Dev->lock);
+	LIST_FOR_EACH_IPV6_ADDR(prIfa, prInet6Dev) {
+		/* Do not let firmware answer for an address still undergoing DAD. */
+		if (prIfa->flags & (IFA_F_TENTATIVE | IFA_F_DADFAILED))
+			continue;
+
 		if (ipv6_addr_src_scope(&prIfa->addr) ==
 					IPV6_ADDR_SCOPE_LINKLOCAL
 				&& u4NumIPv6 > 0) {
@@ -8097,10 +8109,12 @@ kalGetIPv6Address(struct net_device *prDev,
 			ipv6_addr_src_scope(&prIfa->addr),
 			IPV6TOSTR(&prIfa->addr));
 
-		if ((u4NumIPv6 + 1) >= u4MaxNumOfAddr)
-			break;
 		u4NumIPv6++;
+		if (u4NumIPv6 >= u4MaxNumOfAddr)
+			break;
 	}
+	read_unlock_bh(&prInet6Dev->lock);
+	in6_dev_put(prInet6Dev);
 
 	*pu4NumOfIpv6Addr = u4NumIPv6;
 

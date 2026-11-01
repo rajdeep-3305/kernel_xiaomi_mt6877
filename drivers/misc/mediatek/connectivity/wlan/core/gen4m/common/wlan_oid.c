@@ -10271,6 +10271,8 @@ wlanoidSetIPv6NetworkAddress(struct ADAPTER *prAdapter,
 	if (prCmdIPv6NetworkAddressList == NULL)
 		return WLAN_STATUS_FAILURE;
 
+	kalMemZero(prCmdIPv6NetworkAddressList, u4CmdSize);
+
 	/* 4 <4> Fill P_CMD_SET_NETWORK_ADDRESS_LIST */
 	prCmdIPv6NetworkAddressList->ucBssIndex =
 		prNetworkAddressList->ucBssIdx;

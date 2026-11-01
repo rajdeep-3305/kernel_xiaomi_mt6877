@@ -343,6 +343,7 @@ ccflags-y += -DCFG_ROM_PATCH_NO_SEM_CTRL=1
 ccflags-y += -DCFG_MTK_WIFI_SW_WFDMA=1
 CONFIG_MTK_WIFI_WFDMA_BK_RS=y
 ccflags-y += -DCONFIG_MTK_WIFI_HE80
+ccflags-y += -DCFG_SUPPORT_SET_IPV6_NETWORK=1
 endif
 
 ifneq ($(findstring 7_0,$(MTK_COMBO_CHIP)),)
