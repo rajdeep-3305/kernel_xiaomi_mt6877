@@ -6,21 +6,7 @@
 #ifndef __MTK_PDC_H
 #define __MTK_PDC_H
 
-#define ADAPTER_CAP_MAX_NR 10
-
-struct pd_cap {
-	uint8_t selected_cap_idx;
-	uint8_t nr;
-	uint8_t pdp;
-	uint8_t pwr_limit[ADAPTER_CAP_MAX_NR];
-	int max_mv[ADAPTER_CAP_MAX_NR];
-	int min_mv[ADAPTER_CAP_MAX_NR];
-	int ma[ADAPTER_CAP_MAX_NR];
-	int maxwatt[ADAPTER_CAP_MAX_NR];
-	int minwatt[ADAPTER_CAP_MAX_NR];
-	uint8_t type[ADAPTER_CAP_MAX_NR];
-	int info[ADAPTER_CAP_MAX_NR];
-};
+#include <linux/mtk_pd_cap.h>
 
 struct pdc_data {
 	int input_current_limit;

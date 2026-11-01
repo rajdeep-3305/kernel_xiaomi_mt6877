@@ -2,7 +2,7 @@
 #ifndef __MTK_INTF_H
 #define __MTK_INTF_H
 
-#include <linux/types.h>
+#include <linux/mtk_pd_cap.h>
 
 #define ADAPTER_CAP_MAX_NR_BQ 10
 
@@ -13,17 +13,6 @@ enum adapter_ret {
 	ADAPTER_REJECT,
 	ADAPTER_ERROR,
 	ADAPTER_ADJUST,
-};
-
-struct pd_cap {
-	u8 selected_cap_idx;
-	u8 nr;
-	int max_mv[ADAPTER_CAP_MAX_NR_BQ];
-	int min_mv[ADAPTER_CAP_MAX_NR_BQ];
-	int ma[ADAPTER_CAP_MAX_NR_BQ];
-	int maxwatt[ADAPTER_CAP_MAX_NR_BQ];
-	int minwatt[ADAPTER_CAP_MAX_NR_BQ];
-	u8 type[ADAPTER_CAP_MAX_NR_BQ];
 };
 
 struct charger_manager;
